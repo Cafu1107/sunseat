@@ -1,10 +1,13 @@
 import { t, setLang, getLang, applyI18n, locale } from './i18n.js';
-import { CARS, carById } from './cars.js';
-import { fetchRoute, sampleRoute, searchPlaces, reversePlace, haversine } from './route.js';
+import { CARS, carById, COLORS, colorById, BODY_KEYS, setCustom, CUSTOM_DEFAULT } from './cars.js';
+import { fetchRoutes, sampleRoute, searchPlaces, reversePlace, haversine } from './route.js';
 import { fetchWeather } from './weather.js';
 import { simulate, findGlare, findTwilight, armIndex, sweatLiters, departureScan, seatFamily, sunSide } from './sim.js';
-import { heat, refreshHeatBase, silhouetteSVG, buildCarView, drawStrip, familyCarSVG, escapeHtml } from './render.js';
+import { heat, refreshHeatBase, silhouetteSVG, buildCarView, drawStrip, familyCarSVG, escapeHtml, skyAt } from './render.js';
 import { makeShareCard } from './share.js';
+import { parkScan } from './park.js';
+import { unlock } from './badges.js';
+import { renderCabin, moveCabinMarker, renderTan, renderSeason, renderBadges, renderPark, dirName } from './features.js';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -14,12 +17,22 @@ const store = {
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const SITE = 'cafu1107.github.io/sunseat';
 
+function loadCustom() {
+  try { return { ...CUSTOM_DEFAULT, ...JSON.parse(store.get('sunseat.custom') || '{}') }; } catch (e) { return { ...CUSTOM_DEFAULT }; }
+}
+
 const state = {
+  mode: 'trip',
   from: null,
   to: null,
+  custom: setCustom(loadCustom()) && loadCustom(),
   carId: carById(store.get('sunseat.car') || 'egea').id,
+  colorId: colorById(store.get('sunseat.color') || 'silver').id,
   tint: 0,
   roofOpen: true,
+  parkHours: 3,
+  park: null,
+  routes: [], routeIdx: 0, altDoses: null,
   route: null, routeKey: '', samples: null,
   weather: null, weatherKey: '',
   depart: null,
@@ -108,7 +121,7 @@ function placeMarkers(focus, zoom = 15) {
     return m;
   };
   markerA = upd('from', markerA, 'A', 'mk-a');
-  markerB = upd('to', markerB, 'B', 'mk-b');
+  markerB = state.mode === 'park' ? markerB : upd('to', markerB, 'B', 'mk-b');
   if (state.sim) return;
   if (state.from && state.to && !focus) {
     map.fitBounds([[state.from.lat, state.from.lng], [state.to.lat, state.to.lng]], { padding: [60, 60], maxZoom: 13 });
@@ -136,7 +149,7 @@ async function setPoint(which, place, { fly = true, zoom = 15, remember = true, 
     $(which).value = placeText(p);
   }
   if (remember) rememberPlace(p);
-  if (rerun && state.sim && state.from && state.to) run();
+  if (rerun && (state.mode === 'park' ? state.park : state.sim && state.from && state.to)) run();
 }
 
 // Son kullanılan yerler (sadece bu tarayıcıda).
@@ -257,14 +270,40 @@ function carIcon() {
   });
 }
 
+// Seçili olmayan güzergahlar: ince, kesik çizgi. Tıklayınca o güzergaha geçilir.
+let altLayer;
+function drawAltLines() {
+  if (altLayer) map.removeLayer(altLayer);
+  altLayer = L.layerGroup();
+  state.routes.forEach((r, i) => {
+    if (i === state.routeIdx) return;
+    const line = L.polyline(r.route.coords, { color: isDark() ? '#9aa3ab' : '#5f6870', weight: 5, opacity: 0.55, dashArray: '2 9', lineCap: 'round' });
+    line.on('click', () => selectRoute(i));
+    line.on('mouseover', () => line.setStyle({ opacity: 0.95 }));
+    line.on('mouseout', () => line.setStyle({ opacity: 0.55 }));
+    line.altIndex = i;
+    altLayer.addLayer(line);
+  });
+  altLayer.addTo(map);
+}
+function highlightAlt(i, on) {
+  if (!altLayer) return;
+  altLayer.eachLayer((l) => { if (l.altIndex === i) l.setStyle({ opacity: on ? 0.95 : 0.55, weight: on ? 7 : 5 }); });
+}
+
 function drawRouteOnMap(fit) {
+  drawAltLines();
   if (casing) map.removeLayer(casing);
   casing = L.polyline(state.route.coords, { color: isDark() ? '#000' : '#2b3035', weight: 11, opacity: 0.85, interactive: false }).addTo(map);
   paintRoute();
   if (!carMarker) carMarker = L.marker(state.route.coords[0], { icon: carIcon(), interactive: false, keyboard: false, zIndexOffset: 1000 }).addTo(map);
   if (markerA) markerA.setZIndexOffset(500);
   if (markerB) markerB.setZIndexOffset(500);
-  if (fit) map.fitBounds(casing.getBounds(), { padding: [40, 40] });
+  if (fit) {
+    const b = casing.getBounds();
+    if (altLayer) altLayer.eachLayer((l) => b.extend(l.getBounds()));
+    map.fitBounds(b, { padding: [40, 40] });
+  }
 }
 
 function paintRoute() {
@@ -286,9 +325,56 @@ function paintRoute() {
 }
 
 // ---------- Form: hazır rotalar, arabalar ----------
+// Kayıtlı rotalar (bu tarayıcıda).
+function savedRoutes() {
+  try { return JSON.parse(store.get('sunseat.saved') || '[]'); } catch (e) { return []; }
+}
+function saveCurrentRoute() {
+  if (!state.from || !state.to) return;
+  const list = savedRoutes().filter((s) => !(s.from.name === state.from.name && s.to.name === state.to.name && s.time === $('time').value));
+  list.unshift({
+    from: { name: state.from.name, lat: state.from.lat, lng: state.from.lng },
+    to: { name: state.to.name, lat: state.to.lat, lng: state.to.lng },
+    time: $('time').value, carId: state.carId,
+  });
+  store.set('sunseat.saved', JSON.stringify(list.slice(0, 8)));
+  renderPresets();
+  toast(t('saved.toast'));
+}
+
 function renderPresets() {
   const box = $('presets');
   box.innerHTML = '';
+  savedRoutes().forEach((s, idx) => {
+    const wrap = document.createElement('span');
+    wrap.className = 'chip chip-saved';
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.innerHTML = `<i class="ph-fill ph-star"></i> ${escapeHtml(s.from.name.split(',')[0])} → ${escapeHtml(s.to.name.split(',')[0])} <small>${escapeHtml(s.time || '')}</small>`;
+    go.addEventListener('click', () => {
+      state.from = { ...s.from }; state.to = { ...s.to };
+      $('from').value = s.from.name; $('to').value = s.to.name;
+      if (s.time) $('time').value = s.time;
+      if (s.carId && s.carId !== state.carId) { state.carId = carById(s.carId).id; renderCars(); }
+      if (state.mode !== 'trip') setMode('trip');
+      placeMarkers();
+      run();
+    });
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'chip-x';
+    del.setAttribute('aria-label', t('saved.remove'));
+    del.innerHTML = '<i class="ph ph-x"></i>';
+    del.addEventListener('click', () => {
+      const list = savedRoutes();
+      list.splice(idx, 1);
+      store.set('sunseat.saved', JSON.stringify(list));
+      renderPresets();
+      toast(t('saved.removed'));
+    });
+    wrap.append(go, del);
+    box.appendChild(wrap);
+  });
   t('presets').forEach((p) => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -318,6 +404,14 @@ function renderCars() {
     lab.querySelector('input').addEventListener('change', () => selectCar(c.id));
     rail.appendChild(lab);
   });
+  // Kendi araban
+  const cu = carById('custom');
+  const lab = document.createElement('label');
+  lab.className = 'car-card is-custom';
+  lab.innerHTML = `<input type="radio" name="car" value="custom" ${state.carId === 'custom' ? 'checked' : ''}>
+    ${silhouetteSVG(cu)}<b>${t('custom.name')}</b><small>${cu.tag[getLang()]}</small><i class="ph ph-wrench cs-plus"></i>`;
+  lab.querySelector('input').addEventListener('change', () => selectCar('custom'));
+  rail.appendChild(lab);
   const sel = rail.querySelector('input:checked');
   // Sadece rayı yatay kaydır; scrollIntoView paneli dikeyde de kaydırıyordu.
   if (sel) requestAnimationFrame(() => { rail.scrollLeft = sel.closest('.car-card').offsetLeft - rail.offsetLeft - 2; });
@@ -333,14 +427,103 @@ function updateCarUI() {
     $('roofLabel').textContent = t(car.roof === 'pano' ? 'roof.pano' : 'roof.soft');
     $('roofOpen').checked = state.roofOpen;
   } else sw.hidden = true;
-  if (!$('goBtn').classList.contains('loading')) $('goLabel').textContent = t(car.ac ? 'form.go' : 'form.goChoke');
+  if (!$('goBtn').classList.contains('loading')) $('goLabel').textContent = goLabelText();
+  $('builder').hidden = state.carId !== 'custom';
+  if (state.carId === 'custom') renderBuilder();
+}
+
+function goLabelText() {
+  if (state.mode === 'park') return t('form.parkGo');
+  return t(carById(state.carId).ac ? 'form.go' : 'form.goChoke');
+}
+
+// Araba, renk ya da ayar değişince: hangi moddaysak onu yeniden hesapla.
+function refreshResults() {
+  if (state.mode === 'park' && state.park) { runPark({ quiet: true }); return; }
+  if (state.sim) { recompute(); updateHash(); }
 }
 
 function selectCar(id) {
   state.carId = id;
   store.set('sunseat.car', id);
   updateCarUI();
-  if (state.sim) { recompute(); updateHash(); }
+  if (id === 'sahin') award('sahin');
+  refreshResults();
+}
+
+// ---------- Kendi arabanı tarif et ----------
+function renderBuilder() {
+  const c = state.custom;
+  const seg = (box, items, cur, onPick, disabled = () => false) => {
+    box.innerHTML = '';
+    items.forEach(([val, label]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', String(val) === String(cur) ? 'true' : 'false');
+      b.textContent = label;
+      b.disabled = disabled(val);
+      b.addEventListener('click', () => onPick(val));
+      box.appendChild(b);
+    });
+  };
+  const bodies = BODY_KEYS.filter((k) => k !== 'retro');
+  seg($('bBody'), bodies.map((k) => [k, t('body.' + k)]), c.body, (v) => updateCustom({ body: v, seats: v === 'roadster' ? 2 : c.seats === 2 ? 5 : c.seats, roof: v === 'roadster' ? 'soft' : c.roof }));
+  seg($('bRoof'), [['metal', t('roofType.metal')], ['pano', t('roofType.pano')], ['glass', t('roofType.glass')], ['soft', t('roofType.soft')]], c.roof, (v) => updateCustom({ roof: v }));
+  seg($('bSeats'), [[2, '2'], [5, '5'], [7, '7']], c.body === 'roadster' ? 2 : c.seats, (v) => updateCustom({ seats: v }), (v) => c.body === 'roadster' && v !== 2);
+  $('bPrivacy').checked = !!c.privacy;
+  $('bAc').checked = c.ac !== false;
+}
+
+function updateCustom(patch) {
+  state.custom = { ...state.custom, ...patch };
+  store.set('sunseat.custom', JSON.stringify(state.custom));
+  setCustom(state.custom);
+  award('engineer');
+  // Siluet ve not güncellensin.
+  const card = document.querySelector('.car-card.is-custom');
+  if (card) {
+    const svg = card.querySelector('svg');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = silhouetteSVG(carById('custom'));
+    svg.replaceWith(tmp.firstElementChild);
+  }
+  updateCarUI();
+  refreshResults();
+}
+
+// ---------- Renk ----------
+function renderSwatches() {
+  const box = $('swatches');
+  box.innerHTML = '';
+  COLORS.forEach((c) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'swatch';
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', c.id === state.colorId ? 'true' : 'false');
+    b.setAttribute('aria-label', c.name[getLang()]);
+    b.title = c.name[getLang()];
+    b.style.setProperty('--c', c.hex);
+    b.addEventListener('click', () => {
+      state.colorId = c.id;
+      store.set('sunseat.color', c.id);
+      box.querySelectorAll('.swatch').forEach((x) => x.setAttribute('aria-checked', x === b ? 'true' : 'false'));
+      $('colorOut').textContent = c.name[getLang()];
+      award('painter');
+      refreshResults();
+    });
+    box.appendChild(b);
+  });
+  $('colorOut').textContent = colorById(state.colorId).name[getLang()];
+}
+
+// ---------- Rozetler ----------
+function award(id) {
+  if (!unlock(id)) return;
+  const [name] = t('badge.' + id);
+  setTimeout(() => toast(t('badges.toast', { name })), 400);
+  renderBadges(id);
 }
 
 // ---------- Otomatik tamamlama ----------
@@ -483,7 +666,7 @@ function setLoading(on, key) {
     $('goLabel').textContent = t('form.going');
   } else {
     btn.classList.remove('loading', 'turning', 'choke');
-    $('goLabel').textContent = t(carById(state.carId).ac ? 'form.go' : 'form.goChoke');
+    $('goLabel').textContent = goLabelText();
   }
 }
 
@@ -514,6 +697,7 @@ async function ensureWeather(depart) {
 }
 
 async function run() {
+  if (state.mode === 'park') return runPark();
   hideError();
   stopPlay();
   const token = ++runToken;
@@ -531,10 +715,13 @@ async function run() {
     const key = `${from.lat.toFixed(5)},${from.lng.toFixed(5)};${to.lat.toFixed(5)},${to.lng.toFixed(5)}`;
     const newRoute = key !== state.routeKey;
     if (newRoute) {
-      const route = await fetchRoute(from, to);
+      const routes = await fetchRoutes(from, to);
       if (token !== runToken) return;
-      state.route = route;
-      state.samples = sampleRoute(route);
+      state.routes = routes.map((r) => ({ route: r, samples: sampleRoute(r) }));
+      state.routeIdx = Math.min(state.pendingRouteIdx || 0, state.routes.length - 1);
+      state.pendingRouteIdx = 0;
+      state.route = state.routes[state.routeIdx].route;
+      state.samples = state.routes[state.routeIdx].samples;
       state.routeKey = key;
       state.weatherKey = '';
       state.idx = 0;
@@ -550,6 +737,7 @@ async function run() {
     drawRouteOnMap(newRoute);
     setScrub(Math.min(state.idx, state.sim.points.length - 1));
     updateHash();
+    checkTripBadges();
     if (window.innerWidth < 980 && newRoute) {
       document.querySelector('.map-wrap').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' });
     }
@@ -570,6 +758,176 @@ function compute() {
   state.sim = simulate({ samples: state.samples, depart: state.depart, car, opts, weather: state.weather });
   state.mySeat = Math.min(state.mySeat, state.sim.seatKeys.length - 1);
   state.scan = departureScan({ samples: state.samples, depart: state.depart, car, opts, weather: state.weather, seat: state.mySeat });
+  computeAlts();
+}
+
+// Her güzergah için seçili koltuğun güneş dozu.
+function computeAlts() {
+  if (state.routes.length < 2) { state.altDoses = null; return; }
+  const car = carById(state.carId);
+  const opts = { tint: state.tint, roofOpen: state.roofOpen };
+  state.altDoses = state.routes.map((r, i) => (i === state.routeIdx
+    ? state.sim.dose[state.mySeat]
+    : simulate({ samples: r.samples, depart: state.depart, car, opts, weather: state.weather, detail: false }).dose[state.mySeat]));
+}
+
+function selectRoute(i) {
+  if (i === state.routeIdx || !state.routes[i]) return;
+  stopPlay();
+  state.routeIdx = i;
+  state.route = state.routes[i].route;
+  state.samples = state.routes[i].samples;
+  state.idx = 0;
+  compute();
+  renderAll(false);
+  drawRouteOnMap(false);
+  setScrub(0);
+  updateHash();
+}
+
+function renderAlts() {
+  const box = $('alts');
+  if (!state.altDoses) { box.hidden = true; return; }
+  box.hidden = false;
+  let shade = 0;
+  state.altDoses.forEach((d, i) => { if (d < state.altDoses[shade] - 0.5) shade = i; });
+  const seat = seatName(state.mySeat);
+  box.innerHTML = '';
+  state.routes.forEach((r, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'alt';
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', i === state.routeIdx ? 'true' : 'false');
+    b.innerHTML = `<b>${escapeHtml(t('alts.route', { n: i + 1 }))}</b>
+      <span>${fmtKm(r.route.distance)} · ${fmtDur(r.route.duration)}</span>
+      <strong>${escapeHtml(t('alts.seat', { seat, min: Math.round(state.altDoses[i]) }))}</strong>
+      ${i === shade && state.altDoses.some((d) => d > state.altDoses[shade] + 0.5) ? `<em class="alt-tag">${t('alts.shadiest')}</em>` : ''}`;
+    b.addEventListener('click', () => selectRoute(i));
+    b.addEventListener('mouseenter', () => highlightAlt(i, true));
+    b.addEventListener('mouseleave', () => highlightAlt(i, false));
+    box.appendChild(b);
+  });
+}
+
+function checkTripBadges() {
+  const pts = state.sim.points;
+  award('first');
+  if (findTwilight(pts).some((x) => x.kind === 'set')) award('sunset');
+  if (!pts.some((p) => p.sunAlt > 0)) award('night');
+  if (state.route.distance > 500000) award('long');
+  const car = carById(state.carId);
+  if (car.roof === 'soft' && state.roofOpen) award('roofless');
+  const out = (p) => p.lat < 35.8 || p.lat > 42.2 || p.lng < 25.6 || p.lng > 44.9;
+  if (out(state.from) || out(state.to)) award('world');
+}
+
+// ---------- Park modu ----------
+let parkMarker;
+async function runPark({ quiet = false } = {}) {
+  hideError();
+  stopPlay();
+  const token = ++runToken;
+  const dateV = $('date').value, timeV = $('time').value;
+  if (!dateV || !timeV) { showError(t('err.date')); return; }
+  if (!quiet) { crank(); setLoading(true, 'park.loading'); }
+  try {
+    const at = await resolvePlace('from');
+    if (!at) { showError(t('err.places')); return; }
+    const start = new Date(`${dateV}T${timeV}`).getTime();
+    const hours = state.parkHours;
+    const key = `${at.lat.toFixed(4)},${at.lng.toFixed(4)}|${dateV}|${hours}`;
+    if (key !== state.parkWxKey) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 8000);
+      try { state.parkWeather = await fetchWeather({ coords: [[at.lat, at.lng]] }, start, start + hours * 36e5, ctrl.signal); }
+      catch (e) { state.parkWeather = null; }
+      finally { clearTimeout(timer); }
+      state.parkWxKey = key;
+    }
+    if (token !== runToken) return;
+    const color = colorById(state.colorId);
+    state.park = parkScan({ lat: at.lat, lng: at.lng, start, hours, car: carById(state.carId), opts: { tint: state.tint, roofOpen: state.roofOpen }, weather: state.parkWeather, absorb: color.abs });
+    showPark(!quiet);
+    award('park');
+    updateHash();
+  } catch (e) {
+    if (token !== runToken) return;
+    if (e.code === 'notFound') showError(t('err.notFound', { q: e.q }));
+    else { console.error(e); showError(t('err.net')); }
+  } finally {
+    if (token === runToken && !quiet) setLoading(false);
+  }
+}
+
+function showPark(animate) {
+  $('empty').hidden = true;
+  $('results').hidden = true;
+  const box = $('parkResults');
+  box.hidden = false;
+  if (animate) {
+    box.classList.remove('show'); void box.offsetWidth; box.classList.add('show');
+    box.querySelectorAll('.reveal').forEach((el, i) => el.style.setProperty('--i', i));
+  }
+  const at = state.from;
+  renderPark({ res: state.park, hours: state.parkHours, onPreview: (h) => setParkMarker(at, h) });
+  if (animate) map.flyTo([at.lat, at.lng], Math.max(map.getZoom(), 17), { duration: reduceMotion() ? 0 : 0.8 });
+}
+
+// Araba işaretini seçili renge boya; açık renklerde koyu kenar.
+function paintMarker(el) {
+  const c = colorById(state.colorId);
+  const r = el.querySelector('.cm-car rect');
+  r.setAttribute('fill', c.hex);
+  r.setAttribute('stroke', c.abs < 0.5 ? '#15181b' : '#fff');
+}
+
+function setParkMarker(at, heading) {
+  if (!parkMarker) {
+    parkMarker = L.marker([at.lat, at.lng], { icon: carIcon(), interactive: false, keyboard: false, zIndexOffset: 1000 }).addTo(map);
+  } else parkMarker.setLatLng([at.lat, at.lng]);
+  const el = parkMarker.getElement();
+  if (!el) return;
+  el.querySelector('.cm-car').style.transform = `rotate(${heading}deg)`;
+  paintMarker(el);
+  el.querySelector('.cm-sun').style.display = 'none';
+}
+
+// ---------- Mod ----------
+function setMode(m) {
+  if (m === state.mode) return;
+  stopPlay();
+  finishPick(false);
+  state.mode = m;
+  document.documentElement.dataset.mode = m;
+  document.querySelectorAll('.mode-tab').forEach((b) => b.setAttribute('aria-selected', b.dataset.mode === m ? 'true' : 'false'));
+  applyModeTexts();
+  hideError();
+  const park = m === 'park';
+  // Haritadaki katmanlar
+  [casing, heatLayer, altLayer, carMarker, markerB].forEach((l) => {
+    if (!l) return;
+    if (park) map.removeLayer(l); else l.addTo(map);
+  });
+  if (parkMarker && !park) { map.removeLayer(parkMarker); parkMarker = null; }
+  $('mapLegend').hidden = park || !state.sim;
+  $('results').hidden = park || !state.sim;
+  $('parkResults').hidden = !park || !state.park;
+  $('empty').hidden = park ? !!state.park : !!state.sim;
+  if (park && state.from) runPark({ quiet: !!state.park });
+  else if (!park && state.sim) { requestAnimationFrame(() => { drawStrips(); map.invalidateSize(); }); }
+  updateHash();
+}
+
+function applyModeTexts() {
+  const park = state.mode === 'park';
+  $('fromLabel').textContent = t(park ? 'form.parkFrom' : 'form.from');
+  $('timeLabel').textContent = t(park ? 'form.parkTime' : 'form.time');
+  $('goLabel').textContent = goLabelText();
+  const eh = document.querySelector('#empty h2'), ep = document.querySelector('#empty p');
+  eh.textContent = t(park ? 'empty.parkTitle' : 'empty.title');
+  ep.textContent = t(park ? 'empty.parkBody' : 'empty.body');
+  $('parkHoursOut').textContent = t('park.hoursOut', { h: state.parkHours });
 }
 
 let recomputeTimer;
@@ -596,8 +954,10 @@ function renderAll(animate) {
     res.querySelectorAll('.reveal').forEach((el, i) => el.style.setProperty('--i', i));
   }
   const car = carById(state.carId);
-  carView = buildCarView($('carSvg'), car, state.sim.seatKeys.map((k) => t('seat.short.' + k)), [0, 2, 4, 6].map((i) => t('compass')[i]));
+  const paint = colorById(state.colorId).hex;
+  carView = buildCarView($('carSvg'), car, state.sim.seatKeys.map((k) => t('seat.short.' + k)), [0, 2, 4, 6].map((i) => t('compass')[i]), paint);
   carView.seats.forEach((s, i) => s.g.addEventListener('click', () => selectSeat(i)));
+  renderAlts();
   renderVerdict();
   renderMeta();
   renderStrips();
@@ -607,6 +967,9 @@ function renderAll(animate) {
   renderFamily();
   renderSweat();
   renderFact();
+  renderCabin({ points: state.sim.points, car, colorId: state.colorId });
+  renderMineCards();
+  renderBadges();
   const sc = $('scrub');
   sc.max = String(state.sim.points.length - 1);
 }
@@ -728,10 +1091,24 @@ function selectSeat(i) {
   document.querySelectorAll('#strips .strip').forEach((b, k) => b.setAttribute('aria-pressed', k === i ? 'true' : 'false'));
   const car = carById(state.carId);
   state.scan = departureScan({ samples: state.samples, depart: state.depart, car, opts: { tint: state.tint, roofOpen: state.roofOpen }, weather: state.weather, seat: i });
+  computeAlts();
+  renderAlts();
   renderBest();
+  renderMineCards();
   paintRoute();
   setScrub(state.idx);
   updateHash();
+}
+
+// Seçili koltuğa bağlı kartlar: bronzlaşma ve mevsimler.
+function renderMineCards() {
+  const car = carById(state.carId);
+  const opts = { tint: state.tint, roofOpen: state.roofOpen };
+  renderTan({ points: state.sim.points, car, opts, seatIdx: state.mySeat, seatKey: state.sim.seatKeys[state.mySeat] });
+  renderSeason({
+    samples: state.samples, depart: state.depart, car, opts,
+    seatKeys: state.sim.seatKeys, totalMin: state.route.duration / 60, mySeat: state.mySeat,
+  });
 }
 
 function setScrub(i) {
@@ -756,11 +1133,21 @@ function setScrub(i) {
   if (getLang() === 'en' && p.cloud != null) ro[5][1] = `${Math.round(p.cloud * 100)}%`;
   $('readout').innerHTML = ro.map(([k, v]) => `<div><span>${k}</span><b>${escapeHtml(v)}</b></div>`).join('');
   positionCursor();
+  moveCabinMarker(i);
+
+  // Canlı gökyüzü
+  const sky = skyAt(p.sunAlt);
+  const skyEl = $('sky');
+  skyEl.style.setProperty('--sky-top', sky.top);
+  skyEl.style.setProperty('--sky-bottom', sky.bottom);
+  skyEl.style.setProperty('--stars', sky.stars.toFixed(2));
+  skyEl.classList.toggle('is-day', p.sunAlt > 4);
 
   if (carMarker) {
     carMarker.setLatLng([p.lat, p.lng]);
     const el = carMarker.getElement();
     if (el) {
+      paintMarker(el);
       el.querySelector('.cm-car').style.transform = `rotate(${p.heading}deg)`;
       const s = el.querySelector('.cm-sun');
       s.style.transform = `rotate(${p.sunAz}deg)`;
@@ -814,6 +1201,7 @@ function renderBest() {
     b.setAttribute('aria-label', `${fmtTime(s.ms)}: ${Math.round(s.dose)} ${t('tl.minutes')}`);
     b.innerHTML = `<i style="height:${Math.max(3, s.dose / max * 100)}%"></i><span>${fmtTime(s.ms)} · ${Math.round(s.dose)}</span>`;
     b.addEventListener('click', () => {
+      if (s === best && s.off !== 0) award('shade');
       const d = new Date(s.ms);
       $('date').value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
       $('time').value = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -874,18 +1262,20 @@ function renderArm() {
   countUp($('armScore'), score, 1);
   const lvl = score < 0.5 ? 0 : score < 2 ? 1 : score < 4.5 ? 2 : score < 7.5 ? 3 : 4;
   $('armLabel').textContent = t('arm.l' + lvl);
+  if (score >= 7.5) award('tan');
   $('armFoot').textContent = t(car.roof === 'soft' && state.roofOpen ? 'arm.footRhd' : 'arm.foot');
 }
 
 // ---------- Aile modu ----------
 function defaultFamily() {
   const names = t('family.defaults');
-  const prefs = ['any', 'shade', 'sun', 'shade', 'any'];
+  const prefs = ['any', 'shade', 'sun', 'shade', 'any', 'sun', 'any'];
   return names.map((n, i) => ({ name: n, pref: prefs[i] }));
 }
 
 function renderFamily() {
   if (!state.family) state.family = defaultFamily();
+  if (state.family.length < 7) state.family = state.family.concat(defaultFamily().slice(state.family.length));
   const car = carById(state.carId);
   const list = $('familyList');
   list.innerHTML = '';
@@ -896,7 +1286,7 @@ function renderFamily() {
     li.innerHTML = `<span class="role">${t(i === 0 ? 'family.driver' : 'family.rider')}</span>
       <input type="text" maxlength="14" value="${escapeHtml(p.name)}" aria-label="${t('family.name')} ${i + 1}">
       ${i === 0 ? '<span></span>' : `<button type="button" class="pref" data-pref="${p.pref}"><i class="ph ${icons[p.pref]}"></i><span>${t('family.pref.' + p.pref)}</span></button>`}`;
-    li.querySelector('input').addEventListener('input', (e) => { p.name = e.target.value; renderFamilyResult(); });
+    li.querySelector('input').addEventListener('input', (e) => { p.name = e.target.value; renderFamilyResult(); award('family'); });
     const btn = li.querySelector('.pref');
     if (btn) btn.addEventListener('click', () => {
       p.pref = cycle[p.pref];
@@ -945,19 +1335,31 @@ function renderFact() {
 
 // ---------- Paylaşım ----------
 function updateHash() {
-  if (!state.from || !state.to) return;
+  const park = state.mode === 'park';
+  if (!state.from || (!park && !state.to)) return;
   const enc = (p) => `${p.lat.toFixed(5)},${p.lng.toFixed(5)},${encodeURIComponent(p.name)}`;
   const h = new URLSearchParams();
+  if (park) h.set('m', 'park');
   h.set('f', enc(state.from));
-  h.set('t', enc(state.to));
+  if (!park && state.to) h.set('t', enc(state.to));
   h.set('d', `${$('date').value}T${$('time').value}`);
   h.set('c', state.carId);
+  if (state.carId === 'custom') {
+    const c = state.custom;
+    h.set('cu', [c.body, c.roof, c.privacy ? 1 : 0, c.ac === false ? 0 : 1, c.seats].join('.'));
+  }
+  if (state.colorId !== 'silver') h.set('col', state.colorId);
   if (state.tint) h.set('ti', String(state.tint));
   if (!state.roofOpen) h.set('r', '0');
-  if (state.mySeat) h.set('s', String(state.mySeat));
+  if (park) h.set('h', String(state.parkHours));
+  else {
+    if (state.mySeat) h.set('s', String(state.mySeat));
+    if (state.routeIdx) h.set('ri', String(state.routeIdx));
+  }
   history.replaceState(null, '', '#' + decodeURIComponent(h.toString()));
 }
 
+// Dönüş: 'trip' | 'park' | false (otomatik hesap yapılacak mı?)
 function readHash() {
   if (!location.hash) return false;
   const h = new URLSearchParams(location.hash.slice(1));
@@ -970,14 +1372,23 @@ function readHash() {
   const f = dec(h.get('f')), to = dec(h.get('t'));
   const d = h.get('d');
   if (d && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d)) { $('date').value = d.slice(0, 10); $('time').value = d.slice(11); }
+  if (h.get('cu')) {
+    const [body, roof, pr, ac, seats] = h.get('cu').split('.');
+    state.custom = { body, roof, privacy: pr === '1', ac: ac !== '0', seats: Number(seats) || 5 };
+    setCustom(state.custom);
+  }
   if (h.get('c')) state.carId = carById(h.get('c')).id;
+  if (h.get('col')) state.colorId = colorById(h.get('col')).id;
   if (h.get('ti')) state.tint = Math.max(0, Math.min(80, Number(h.get('ti')) || 0));
   if (h.get('r') === '0') state.roofOpen = false;
   if (h.get('s')) state.mySeat = Number(h.get('s')) || 0;
-  if (!f || !to) return false;
-  state.from = f; state.to = to;
-  $('from').value = f.name; $('to').value = to.name;
-  return true;
+  if (h.get('ri')) state.pendingRouteIdx = Math.max(0, Math.min(2, Number(h.get('ri')) || 0));
+  if (h.get('h')) state.parkHours = Math.max(1, Math.min(10, Number(h.get('h')) || 3));
+  const park = h.get('m') === 'park';
+  if (f) { state.from = f; $('from').value = f.name; }
+  if (to) { state.to = to; $('to').value = to.name; }
+  if (park) return f ? 'park' : false;
+  return f && to ? 'trip' : false;
 }
 
 async function shareCard() {
@@ -1023,9 +1434,13 @@ function applyLang(l) {
   applyI18n();
   renderPresets();
   renderCars();
+  renderSwatches();
+  applyModeTexts();
+  renderBadges();
+  if (state.mode === 'park' && state.park) showPark(false);
   if (state.sim) {
     state.family = state.family && state.family.map((p, i) => {
-      const other = l === 'tr' ? ['Me', 'Ece', 'Mert', 'Grandpa', 'Pamuk'] : ['Ben', 'Ece', 'Mert', 'Dede', 'Pamuk'];
+      const other = l === 'tr' ? ['Me', 'Ece', 'Mert', 'Grandpa'] : ['Ben', 'Ece', 'Mert', 'Dede'];
       return p.name === other[i] ? { ...p, name: t('family.defaults')[i] } : p;
     });
     renderAll(false);
@@ -1048,11 +1463,17 @@ function init() {
   $('time').value = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
   const fromHash = readHash();
+  if (fromHash === 'park') { state.mode = 'park'; document.documentElement.dataset.mode = 'park'; }
+  document.querySelectorAll('.mode-tab').forEach((b) => b.setAttribute('aria-selected', b.dataset.mode === state.mode ? 'true' : 'false'));
+  $('parkHours').value = String(state.parkHours);
   $('tint').value = String(state.tint);
   $('tintOut').textContent = getLang() === 'tr' ? `%${state.tint}` : `${state.tint}%`;
 
   renderPresets();
   renderCars();
+  renderSwatches();
+  renderBadges();
+  applyModeTexts();
   initMap();
   $('themeToggle').classList.toggle('is-dark', isDark());
 
@@ -1071,6 +1492,20 @@ function init() {
   });
 
   $('tripForm').addEventListener('submit', (e) => { e.preventDefault(); run(); });
+  document.querySelectorAll('.mode-tab').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+  $('parkHours').addEventListener('input', (e) => {
+    state.parkHours = Number(e.target.value);
+    $('parkHoursOut').textContent = t('park.hoursOut', { h: state.parkHours });
+  });
+  $('parkHours').addEventListener('change', () => { if (state.park) runPark({ quiet: true }); });
+  $('bPrivacy').addEventListener('change', (e) => updateCustom({ privacy: e.target.checked }));
+  $('bAc').addEventListener('change', (e) => updateCustom({ ac: e.target.checked }));
+  $('saveRoute').addEventListener('click', saveCurrentRoute);
+  // Mevsim tablosu görününce rozet.
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting)) { award('season'); io.disconnect(); } }, { threshold: 0.6 });
+    io.observe($('seasonCard'));
+  }
   $('swapBtn').addEventListener('click', () => {
     const b = $('swapBtn');
     b.classList.toggle('flip');
@@ -1082,12 +1517,13 @@ function init() {
   $('tint').addEventListener('input', (e) => {
     state.tint = Number(e.target.value);
     $('tintOut').textContent = getLang() === 'tr' ? `%${state.tint}` : `${state.tint}%`;
-    recompute();
+    refreshResults();
   });
   $('tint').addEventListener('change', updateHash);
-  $('roofOpen').addEventListener('change', (e) => { state.roofOpen = e.target.checked; recompute(); updateHash(); });
-  $('date').addEventListener('change', () => { if (state.sim) run(); });
-  $('time').addEventListener('change', () => { if (state.sim) run(); });
+  $('roofOpen').addEventListener('change', (e) => { state.roofOpen = e.target.checked; refreshResults(); if (state.sim && state.roofOpen && carById(state.carId).roof === 'soft') award('roofless'); });
+  const timeChanged = () => { if (state.mode === 'park' ? state.park : state.sim) run(); };
+  $('date').addEventListener('change', timeChanged);
+  $('time').addEventListener('change', timeChanged);
 
   $('scrub').addEventListener('input', (e) => { stopPlay(); setScrub(Number(e.target.value)); });
   $('playBtn').addEventListener('click', togglePlay);
@@ -1117,6 +1553,7 @@ function init() {
       const b = $('brand');
       b.classList.remove('spin'); void b.offsetWidth; b.classList.add('spin');
       toast(t('egg.logo'));
+      award('logo');
     } else window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
   });
 
@@ -1124,6 +1561,29 @@ function init() {
   window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { drawStrips(); if (map) map.invalidateSize(); }, 120); });
 
   if (fromHash) { placeMarkers(); run(); }
+  setupPwa();
+}
+
+// ---------- PWA ----------
+let installEvt = null;
+function setupPwa() {
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    navigator.serviceWorker.register('sw.js').catch(() => { /* yoksa da çalışır */ });
+  }
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installEvt = e;
+    $('installBtn').hidden = false;
+  });
+  $('installBtn').addEventListener('click', async () => {
+    if (!installEvt) return;
+    installEvt.prompt();
+    const r = await installEvt.userChoice.catch(() => null);
+    installEvt = null;
+    $('installBtn').hidden = true;
+    if (r && r.outcome === 'accepted') toast(t('pwa.installed'));
+  });
+  window.addEventListener('offline', () => toast(t('pwa.offline')));
 }
 
 init();

@@ -58,7 +58,22 @@ export function silhouetteSVG(car) {
 
 // ---------- Üstten araba ----------
 // Arabanın burnu yukarı bakar. Güneş, burna göre açısı (rel) kadar döndürülmüş yörüngede.
-export function buildCarView(svg, car, seatLabels, compassLabels) {
+// Koltuk dikdörtgenleri [x, y, w, h]; sıra SEAT_KEYS ile aynı.
+export function seatLayout(n, left, W, y0, y1, inset) {
+  const span = y1 - y0, inner = W - inset * 2, cx = left + W / 2;
+  const rows = n <= 2 ? [[0.18, 0.5]] : n >= 7 ? [[0.03, 0.27], [0.37, 0.27], [0.71, 0.26]] : [[0.08, 0.34], [0.56, 0.34]];
+  const sw = inner * (n <= 2 ? 0.38 : 0.36);
+  const out = [];
+  rows.forEach(([f, hf], r) => {
+    const y = y0 + span * f, h = span * hf;
+    if (r === 0) out.push([left + inset + 5, y, sw, h], [left + W - inset - 5 - sw, y, sw, h]);
+    else if (r === 1) out.push([left + inset + 3, y, sw * 0.82, h], [cx - sw * 0.36, y, sw * 0.72, h], [left + W - inset - 3 - sw * 0.82, y, sw * 0.82, h]);
+    else out.push([left + inset + 6, y, sw * 0.9, h], [left + W - inset - 6 - sw * 0.9, y, sw * 0.9, h]);
+  });
+  return out;
+}
+
+export function buildCarView(svg, car, seatLabels, compassLabels, paint) {
   svg.innerHTML = '';
   const b = BODIES[car.body];
   const cx = 150, cy = 150;
@@ -101,6 +116,7 @@ export function buildCarView(svg, car, seatLabels, compassLabels) {
   });
   const body = el('path', { class: 'cv-body', d: bodyPath(left, top, W, L, car.body) }, svg);
   body.setAttribute('vector-effect', 'non-scaling-stroke');
+  if (paint) body.style.fill = paint;
 
   const glass = {};
   const rf = b.roofFrom, rt = b.roofTo;
@@ -110,7 +126,7 @@ export function buildCarView(svg, car, seatLabels, compassLabels) {
   // Arka cam
   glass.rw =el('path', { class: 'cv-glass', d: `M${left + inset + 3} ${Y(rt)} L${left + W - inset - 3} ${Y(rt)} L${left + W - 12} ${Y(rt + 0.06)} Q${cx} ${Y(rt + 0.075)} ${left + 12} ${Y(rt + 0.06)} Z` }, svg);
   // Yan camlar
-  const mid = car.seats > 2 ? rf + (rt - rf) * 0.48 : rt;
+  const mid = car.seats > 2 ? rf + (rt - rf) * (car.seats >= 7 ? 0.33 : 0.48) : rt;
   glass.fl = el('rect', { class: 'cv-glass', x: left + 1.5, y: Y(rf) + 2, width: 4.5, height: Y(mid) - Y(rf) - 4, rx: 2 }, svg);
   glass.fr = el('rect', { class: 'cv-glass', x: left + W - 6, y: Y(rf) + 2, width: 4.5, height: Y(mid) - Y(rf) - 4, rx: 2 }, svg);
   if (car.seats > 2) {
@@ -129,17 +145,8 @@ export function buildCarView(svg, car, seatLabels, compassLabels) {
 
   // Koltuklar
   const seats = [];
-  const sw = (W - inset * 2) * (car.seats > 2 ? 0.36 : 0.38), sh = (Y(rt) - Y(rf)) * (car.seats > 2 ? 0.34 : 0.5);
-  const frontY = Y(rf) + (Y(rt) - Y(rf)) * (car.seats > 2 ? 0.08 : 0.2);
-  const rearY = Y(rf) + (Y(rt) - Y(rf)) * 0.56;
-  const pos = [
-    [left + inset + 5, frontY, sw],
-    [left + W - inset - 5 - sw, frontY, sw],
-    [left + inset + 3, rearY, sw * 0.82],
-    [cx - sw * 0.36, rearY, sw * 0.72],
-    [left + W - inset - 3 - sw * 0.82, rearY, sw * 0.82],
-  ].slice(0, car.seats);
-  pos.forEach(([x, y, w], i) => {
+  const pos = seatLayout(car.seats, left, W, Y(rf), Y(rt), inset);
+  pos.forEach(([x, y, w, sh], i) => {
     const g = el('g', { 'data-seat': i, style: 'cursor:pointer' }, svg);
     const r = el('rect', { class: 'cv-seat', x, y, width: w, height: sh, rx: 7 }, g);
     const mine = el('rect', { class: 'cv-mine', x: x - 3, y: y - 3, width: w + 6, height: sh + 6, rx: 9, visibility: 'hidden' }, g);
@@ -208,12 +215,10 @@ export function familyCarSVG(car, assignment, labels) {
   const W = 120 * b.wid, L = 200 * b.len;
   const x = 110 - W / 2, y = 10;
   const rf = y + L * b.roofFrom, rt = y + L * b.roofTo;
-  const sw = W * 0.38, sh = (rt - rf) * (car.seats > 2 ? 0.38 : 0.6);
-  const fy = rf + 6, ry = rf + (rt - rf) * 0.54;
-  const pos = [[x + 10, fy, sw], [x + W - 10 - sw, fy, sw], [x + 8, ry, sw * 0.8], [110 - sw * 0.34, ry, sw * 0.68], [x + W - 8 - sw * 0.8, ry, sw * 0.8]].slice(0, car.seats);
+  const pos = seatLayout(car.seats, x, W, rf, rt, 4);
   let out = `<svg class="family-car" viewBox="0 0 220 ${L + 20}" role="img" aria-label="${labels.aria}">`;
   out += `<path class="cv-body" d="${bodyPath(x, y, W, L, car.body)}"/>`;
-  pos.forEach(([sx, sy, w], i) => {
+  pos.forEach(([sx, sy, w, sh], i) => {
     const a = assignment[i];
     const name = a ? a.name.slice(0, w < 30 ? 3 : 6) : '';
     out += `<rect class="cv-seat" x="${sx}" y="${sy}" width="${w}" height="${sh}" rx="8" style="fill:${heat(a ? a.v : 0)}"/>`;
@@ -221,6 +226,159 @@ export function familyCarSVG(car, assignment, labels) {
   });
   out += '</svg>';
   return out;
+}
+
+// ---------- Canlı gökyüzü ----------
+// Güneş yüksekliğine göre gökyüzü gradyanı [üst, alt] ve yıldız görünürlüğü.
+const SKY = [
+  [-18, '#070b1d', '#141a33'],
+  [-8, '#0f1733', '#2a2c52'],
+  [-3, '#24305a', '#8a4f6e'],
+  [0, '#3c5486', '#f0864a'],
+  [5, '#5f8fc8', '#f5b77a'],
+  [15, '#4f93db', '#b9dcf3'],
+  [45, '#3a86d8', '#a9d6f5'],
+];
+const hex2rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const mix = (a, b, f) => `rgb(${hex2rgb(a).map((c, i) => Math.round(c + (hex2rgb(b)[i] - c) * f)).join(',')})`;
+export function skyAt(alt) {
+  const a = Math.max(SKY[0][0], Math.min(SKY[SKY.length - 1][0], alt));
+  for (let i = 1; i < SKY.length; i++) {
+    if (a <= SKY[i][0]) {
+      const f = (a - SKY[i - 1][0]) / (SKY[i][0] - SKY[i - 1][0]);
+      return { top: mix(SKY[i - 1][1], SKY[i][1], f), bottom: mix(SKY[i - 1][2], SKY[i][2], f), stars: Math.max(0, Math.min(1, (-alt - 2) / 8)), night: alt < -3 };
+    }
+  }
+  const l = SKY[SKY.length - 1];
+  return { top: l[1], bottom: l[2], stars: 0, night: false };
+}
+
+// ---------- Çizgi grafik (sıcaklık) ----------
+// series: [{ values, cls, label, dash }]. Tek y ekseni, °C.
+export function lineChart({ series, xLabels, w = 340, h = 150, unit = '°C', marker = null, ref = null }) {
+  const pad = { l: 34, r: 56, t: 12, b: 22 };
+  const all = series.flatMap((s) => s.values).concat(ref ? [ref.value] : []);
+  let lo = Math.floor(Math.min(...all) - 1), hi = Math.ceil(Math.max(...all) + 1);
+  if (hi - lo < 6) { const m = (hi + lo) / 2; lo = Math.floor(m - 3); hi = Math.ceil(m + 3); }
+  const n = Math.max(...series.map((s) => s.values.length));
+  const X = (i) => pad.l + (n > 1 ? i / (n - 1) : 0) * (w - pad.l - pad.r);
+  const Y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (h - pad.t - pad.b);
+  const ticks = [];
+  const step = Math.max(2, Math.ceil((hi - lo) / 4 / 2) * 2);
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) ticks.push(v);
+  let out = `<svg class="lc" viewBox="0 0 ${w} ${h}" role="img">`;
+  ticks.forEach((v) => {
+    out += `<line class="lc-grid" x1="${pad.l}" x2="${w - pad.r}" y1="${Y(v)}" y2="${Y(v)}"/>`;
+    out += `<text class="lc-tick" x="${pad.l - 6}" y="${Y(v) + 3.5}" text-anchor="end">${v}°</text>`;
+  });
+  if (ref) {
+    out += `<line class="lc-ref" x1="${pad.l}" x2="${w - pad.r}" y1="${Y(ref.value)}" y2="${Y(ref.value)}"/>`;
+    out += `<text class="lc-reflabel" x="${w - pad.r + 6}" y="${Y(ref.value) + 3.5}">${escapeHtml(ref.label)}</text>`;
+  }
+  // Etiketler üst üste binmesin.
+  const ends = series.map((s) => ({ s, y: Y(s.values[s.values.length - 1]) })).sort((a, b) => a.y - b.y);
+  for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 13) ends[i].y = ends[i - 1].y + 13;
+  series.forEach((s) => {
+    const d = s.values.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ');
+    out += `<path class="lc-line ${s.cls}" d="${d}"${s.dash ? ' stroke-dasharray="5 4"' : ''}/>`;
+    const e = ends.find((x) => x.s === s);
+    const last = s.values[s.values.length - 1];
+    out += `<circle class="lc-end ${s.cls}" cx="${X(s.values.length - 1)}" cy="${Y(last)}" r="4"/>`;
+    out += `<text class="lc-label" x="${w - pad.r + 8}" y="${e.y + 3.5}">${Math.round(last)}${unit}</text>`;
+  });
+  if (xLabels) {
+    out += `<text class="lc-tick" x="${pad.l}" y="${h - 5}">${escapeHtml(xLabels[0])}</text>`;
+    out += `<text class="lc-tick" x="${w - pad.r}" y="${h - 5}" text-anchor="end">${escapeHtml(xLabels[1])}</text>`;
+  }
+  out += `<g class="lc-hover" visibility="hidden"><line class="lc-cross" y1="${pad.t}" y2="${h - pad.b}"/>${series.map((s) => `<circle class="lc-dot ${s.cls}" r="4"/>`).join('')}</g>`;
+  if (marker != null) out += `<line class="lc-marker" x1="${X(marker)}" x2="${X(marker)}" y1="${pad.t}" y2="${h - pad.b}"/>`;
+  out += `<rect class="lc-hit" x="${pad.l}" y="0" width="${w - pad.l - pad.r}" height="${h}" fill="transparent"/>`;
+  out += '</svg>';
+  return { html: out, X, Y, n, pad, w };
+}
+
+// Fareyle gezince artı imleci + değer. format(i) -> tooltip metni.
+export function attachLineHover(container, chart, series, format) {
+  const svg = container.querySelector('svg.lc');
+  const tip = container.querySelector('.lc-tip');
+  if (!svg || !tip) return;
+  const g = svg.querySelector('.lc-hover');
+  const cross = g.querySelector('.lc-cross');
+  const dots = g.querySelectorAll('.lc-dot');
+  const move = (ev) => {
+    const r = svg.getBoundingClientRect();
+    const sx = (ev.clientX - r.left) / r.width * chart.w;
+    const span = chart.X(chart.n - 1) - chart.X(0) || 1;
+    const i = Math.max(0, Math.min(chart.n - 1, Math.round((sx - chart.X(0)) / span * (chart.n - 1))));
+    const x = chart.X(i);
+    cross.setAttribute('x1', x); cross.setAttribute('x2', x);
+    series.forEach((s, k) => { dots[k].setAttribute('cx', x); dots[k].setAttribute('cy', chart.Y(s.values[Math.min(i, s.values.length - 1)])); });
+    g.setAttribute('visibility', 'visible');
+    tip.innerHTML = format(i);
+    tip.hidden = false;
+    const left = (x / chart.w) * r.width;
+    tip.style.left = `${Math.min(Math.max(left, 70), r.width - 70)}px`;
+  };
+  const leave = () => { g.setAttribute('visibility', 'hidden'); tip.hidden = true; };
+  svg.addEventListener('pointermove', move);
+  svg.addEventListener('pointerdown', move);
+  svg.addEventListener('pointerleave', leave);
+}
+
+// ---------- Park pusulası ----------
+// list: [{ heading, score }]. En iyi yön işaretli, ortada araba.
+export function parkRose(list, best, compass, selected) {
+  const cx = 130, cy = 130, r0 = 40, r1 = 112;
+  const max = Math.max(...list.map((x) => x.score), 0.001);
+  const min = Math.min(...list.map((x) => x.score));
+  const P = (a, r) => [cx + Math.sin(a * Math.PI / 180) * r, cy - Math.cos(a * Math.PI / 180) * r];
+  let out = `<svg class="rose" viewBox="0 0 260 260" role="img">`;
+  list.forEach((x) => {
+    const a0 = x.heading - 7, a1 = x.heading + 7;
+    const [ax, ay] = P(a0, r0), [bx, by] = P(a0, r1), [ccx, ccy] = P(a1, r1), [dx, dy] = P(a1, r0);
+    const v = max > min ? (x.score - min) / (max - min) : 0;
+    out += `<path class="rose-w${x === best ? ' is-best' : ''}${x.heading === selected ? ' is-sel' : ''}" data-h="${x.heading}" tabindex="0"
+      d="M${ax} ${ay} L${bx} ${by} A${r1} ${r1} 0 0 1 ${ccx} ${ccy} L${dx} ${dy} A${r0} ${r0} 0 0 0 ${ax} ${ay} Z" style="fill:${heat(0.08 + v * 0.85)}"/>`;
+  });
+  compass.forEach((k, i) => {
+    const [x, y] = P(i * 90, r1 + 11);
+    out += `<text class="rose-k" x="${x}" y="${y + 4}" text-anchor="middle">${k}</text>`;
+  });
+  out += `<g class="rose-car" style="transform: rotate(${selected}deg); transform-origin: ${cx}px ${cy}px">
+    <rect x="${cx - 11}" y="${cy - 20}" width="22" height="40" rx="7"/><rect class="rose-ws" x="${cx - 8}" y="${cy - 12}" width="16" height="6" rx="2"/>
+    <path class="rose-nose" d="M${cx} ${cy - 34} l6 9 h-12 Z"/></g>`;
+  out += '</svg>';
+  return out;
+}
+
+// ---------- Bronzlaşma: oturan kişi (önden) ----------
+const SKIN = [[0, [236, 205, 178]], [0.35, [214, 160, 116]], [0.7, [226, 116, 88]], [1, [184, 52, 42]]];
+export function tanColor(v) {
+  for (let i = 1; i < SKIN.length; i++) {
+    if (v <= SKIN[i][0]) {
+      const f = (v - SKIN[i - 1][0]) / (SKIN[i][0] - SKIN[i - 1][0]);
+      return `rgb(${SKIN[i - 1][1].map((c, k) => Math.round(c + (SKIN[i][1][k] - c) * f)).join(',')})`;
+    }
+  }
+  return 'rgb(184,52,42)';
+}
+// Önden görünüş: kişinin solu görselin sağında.
+export function tanFigure(level, names) {
+  const c = (k) => tanColor(level[k] || 0);
+  const tt = (k) => `<title>${escapeHtml(names[k])}: %${Math.round((level[k] || 0) * 100)}</title>`;
+  return `<svg class="tan-fig" viewBox="0 0 200 230" role="img">
+    <rect class="tan-seat" x="44" y="70" width="112" height="150" rx="22"/>
+    <path class="tan-p" d="M100 4 a26 26 0 0 0 -26 26 v4 h52 v-4 a26 26 0 0 0 -26 -26 Z" style="fill:${c('head')}">${tt('head')}</path>
+    <path class="tan-p" d="M74 34 v6 a26 26 0 0 0 26 26 V34 Z" style="fill:${c('faceR')}">${tt('faceR')}</path>
+    <path class="tan-p" d="M126 34 v6 a26 26 0 0 1 -26 26 V34 Z" style="fill:${c('faceL')}">${tt('faceL')}</path>
+    <rect class="tan-p" x="90" y="62" width="20" height="14" rx="4" style="fill:${c('neck')}">${tt('neck')}</rect>
+    <path class="tan-shirt" d="M66 80 Q100 70 134 80 L140 150 H60 Z"/>
+    <path class="tan-p" d="M66 82 Q50 86 46 104 L38 160 Q37 170 46 171 Q54 171 55 162 L64 112 Z" style="fill:${c('armR')}">${tt('armR')}</path>
+    <path class="tan-p" d="M134 82 Q150 86 154 104 L162 160 Q163 170 154 171 Q146 171 145 162 L136 112 Z" style="fill:${c('armL')}">${tt('armL')}</path>
+    <path class="tan-p" d="M60 150 H140 L144 196 Q144 206 134 206 H66 Q56 206 56 196 Z" style="fill:${c('lap')}">${tt('lap')}</path>
+    <text class="tan-side" x="16" y="128">${escapeHtml(names.right)}</text>
+    <text class="tan-side" x="184" y="128" text-anchor="end">${escapeHtml(names.left)}</text>
+  </svg>`;
 }
 
 export function escapeHtml(s) {

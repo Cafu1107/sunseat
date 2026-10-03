@@ -1,0 +1,16 @@
+{
+  "name": "Sunseat",
+  "short_name": "Sunseat",
+  "description": "Güneş hangi koltuğa vuracak? Rota, saat ve arabaya göre koltuk koltuk güneş hesabı.",
+  "lang": "tr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#16191c",
+  "theme_color": "#16191c",
+  "icons": [
+    { "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "assets/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

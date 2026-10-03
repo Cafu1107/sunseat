@@ -6,7 +6,8 @@ const RAD = Math.PI / 180;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const norm = (v) => { const l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; };
 
-export const SEAT_KEYS = ['driver', 'passenger', 'rearLeft', 'rearMid', 'rearRight'];
+export const SEAT_KEYS = ['driver', 'passenger', 'rearLeft', 'rearMid', 'rearRight', 'thirdLeft', 'thirdRight'];
+export const seatKeysFor = (n) => (n <= 2 ? SEAT_KEYS.slice(0, 2) : n >= 7 ? SEAT_KEYS.slice() : SEAT_KEYS.slice(0, 5));
 export const WINDOW_KEYS = ['ws', 'fl', 'fr', 'rl', 'rr', 'rw', 'roof'];
 
 // Hangi camdan giren ışık hangi koltuğa ne kadar düşer (yakın taraf).
@@ -16,6 +17,8 @@ const NEAR = {
   rearLeft:  { ws: 0.28, fl: 0.15, fr: 0, rl: 1,    rr: 0,    rw: 0.6,  roof: 1 },
   rearMid:   { ws: 0.4, fl: 0.06, fr: 0.06, rl: 0.45, rr: 0.45, rw: 0.75, roof: 1 },
   rearRight: { ws: 0.28, fl: 0,  fr: 0.15, rl: 0,   rr: 1,    rw: 0.6,  roof: 1 },
+  thirdLeft:  { ws: 0.12, fl: 0.04, fr: 0, rl: 0.55, rr: 0,    rw: 1,    roof: 1 },
+  thirdRight: { ws: 0.12, fl: 0, fr: 0.04, rl: 0,    rr: 0.55, rw: 1,    roof: 1 },
 };
 // Kabini boydan boya geçmesi gereken ışık: sadece alçak güneş başarır.
 const FAR = {
@@ -24,7 +27,11 @@ const FAR = {
   rearLeft:  { rr: 0.35, fr: 0.08 },
   rearMid:   {},
   rearRight: { rl: 0.35, fl: 0.08 },
+  thirdLeft: { rr: 0.3 },
+  thirdRight: { rl: 0.3 },
 };
+// 7 koltukta ikinci sıra, arka camın ışığını üçüncü sıranın arkasından alır.
+const SEVEN_RW = { rearLeft: 0.3, rearMid: 0.35, rearRight: 0.3 };
 
 export function buildCabin(car, opts) {
   const b = BODIES[car.body];
@@ -50,7 +57,21 @@ export function buildCabin(car, opts) {
     rw:   { n: norm(b.rw), T: topless ? 0 : rearT, max: b.rwMax, k: 1 },
     roof: { n: [0, 0, 1], T: roofT, max: 91, k: 1 },
   };
-  return { windows, seatKeys: SEAT_KEYS.slice(0, car.seats) };
+  return { windows, seatKeys: seatKeysFor(car.seats), seven: car.seats >= 7 };
+}
+
+// Bir koltuğa her camdan gelen ışık payı.
+function weight(cabin, s, k, low) {
+  let near = NEAR[s][k] || 0;
+  if (k === 'rw' && cabin.seven && SEVEN_RW[s] !== undefined) near = SEVEN_RW[s];
+  return near + (FAR[s][k] || 0) * low;
+}
+
+export function seatContrib(cabin, seatKey, win, alt) {
+  const low = clamp(1 - alt / 35, 0, 1);
+  const out = {};
+  for (const k of WINDOW_KEYS) out[k] = (win[k] || 0) * weight(cabin, seatKey, k, low);
+  return out;
 }
 
 // Güneşin doğrudan ışınım şiddeti (0..1). Kaba bir hava kütlesi yaklaşımı.
@@ -81,7 +102,7 @@ export function exposure(cabin, rel, alt, cloud = 0) {
   }
   seatKeys.forEach((s, i) => {
     let v = 0;
-    for (const k of WINDOW_KEYS) v += win[k] * ((NEAR[s][k] || 0) + (FAR[s][k] || 0) * low);
+    for (const k of WINDOW_KEYS) v += win[k] * weight(cabin, s, k, low);
     seats[i] = clamp(v, 0, 1);
   });
   return { seats, win, intensity: I };

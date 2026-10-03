@@ -12,6 +12,10 @@
   <meta property="og:image" content="https://cafu1107.github.io/sunseat/docs/og.png">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Sunseat">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -59,6 +63,7 @@
           <g class="hl-beams"><line x1="21" y1="10" x2="28" y2="9"/><line x1="21.5" y1="16" x2="29" y2="16"/><line x1="21" y1="22" x2="28" y2="23"/></g>
         </svg>
       </button>
+      <button class="install" id="installBtn" type="button" hidden><i class="ph ph-download-simple"></i> <span data-i18n="pwa.install">Yükle</span></button>
       <a class="gh" href="https://github.com/Cafu1107/sunseat" target="_blank" rel="noopener" aria-label="GitHub"><i class="ph ph-github-logo"></i></a>
     </div>
   </header>
@@ -71,12 +76,17 @@
       </div>
 
       <form id="tripForm" novalidate autocomplete="off">
+        <div class="mode-switch" role="tablist" data-i18n-aria="mode.label" aria-label="Mod">
+          <button type="button" role="tab" class="mode-tab" data-mode="trip" aria-selected="true"><i class="ph ph-steering-wheel"></i> <span data-i18n="mode.trip">Yolculuk</span></button>
+          <button type="button" role="tab" class="mode-tab" data-mode="park" aria-selected="false"><i class="ph ph-letter-circle-p"></i> <span data-i18n="mode.park">Park</span></button>
+        </div>
+
         <fieldset class="route-fields">
           <legend class="sr-only" data-i18n="form.route">Rota</legend>
           <div class="lane" aria-hidden="true"></div>
 
           <div class="field place">
-            <label for="from" data-i18n="form.from">Nereden</label>
+            <label for="from" id="fromLabel" data-i18n="form.from">Nereden</label>
             <div class="input-wrap">
               <span class="pin pin-a" aria-hidden="true">A</span>
               <input id="from" type="text" inputmode="search" data-i18n-ph="form.fromPh" placeholder="İstanbul, Kadıköy..." aria-autocomplete="list" aria-controls="fromSuggest" aria-expanded="false" role="combobox">
@@ -88,9 +98,9 @@
             </div>
           </div>
 
-          <button type="button" class="swap" id="swapBtn" data-i18n-aria="form.swap" aria-label="Yönü çevir"><i class="ph ph-arrows-down-up"></i></button>
+          <button type="button" class="swap trip-only" id="swapBtn" data-i18n-aria="form.swap" aria-label="Yönü çevir"><i class="ph ph-arrows-down-up"></i></button>
 
-          <div class="field place">
+          <div class="field place trip-only">
             <label for="to" data-i18n="form.to">Nereye</label>
             <div class="input-wrap">
               <span class="pin pin-b" aria-hidden="true">B</span>
@@ -103,7 +113,7 @@
           </div>
         </fieldset>
 
-        <div class="presets" id="presets" role="group" data-i18n-aria="form.presets" aria-label="Hazır rotalar"></div>
+        <div class="presets trip-only" id="presets" role="group" data-i18n-aria="form.presets" aria-label="Hazır rotalar"></div>
         <p class="hint"><i class="ph ph-hand-tap"></i> <span data-i18n="form.mapHint">Tam nokta için kutudaki hedef işaretine bas ya da haritaya dokun.</span></p>
 
         <div class="field-row">
@@ -112,15 +122,43 @@
             <input id="date" type="date" required>
           </div>
           <div class="field">
-            <label for="time" data-i18n="form.time">Çıkış saati</label>
+            <label for="time" id="timeLabel" data-i18n="form.time">Çıkış saati</label>
             <input id="time" type="time" step="300" required>
           </div>
+        </div>
+        <div class="field park-only">
+          <label for="parkHours"><span data-i18n="park.hours">Ne kadar kalacak?</span> <output id="parkHoursOut" for="parkHours"></output></label>
+          <input id="parkHours" type="range" min="1" max="10" step="1" value="3">
         </div>
 
         <fieldset class="cars">
           <legend data-i18n="form.car">Araban</legend>
           <div class="car-rail" id="carRail" role="radiogroup" data-i18n-aria="form.car" aria-label="Araban"></div>
           <p class="car-note" id="carNote" aria-live="polite"></p>
+
+          <div class="builder" id="builder" hidden>
+            <div class="builder-row">
+              <span class="builder-label" data-i18n="custom.body">Kasa</span>
+              <div class="seg" id="bBody" role="radiogroup"></div>
+            </div>
+            <div class="builder-row">
+              <span class="builder-label" data-i18n="custom.roof">Tavan</span>
+              <div class="seg" id="bRoof" role="radiogroup"></div>
+            </div>
+            <div class="builder-row">
+              <span class="builder-label" data-i18n="custom.seats">Koltuk</span>
+              <div class="seg" id="bSeats" role="radiogroup"></div>
+            </div>
+            <div class="builder-row builder-toggles">
+              <label class="switch"><input type="checkbox" id="bPrivacy"><span class="track" aria-hidden="true"><span class="thumb"></span></span><span data-i18n="custom.privacy">Koyu arka camlar</span></label>
+              <label class="switch"><input type="checkbox" id="bAc"><span class="track" aria-hidden="true"><span class="thumb"></span></span><span data-i18n="custom.ac">Klima var</span></label>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="paint">
+          <legend><span data-i18n="form.color">Renk</span> <output id="colorOut"></output></legend>
+          <div class="swatches" id="swatches" role="radiogroup" data-i18n-aria="form.color" aria-label="Renk"></div>
         </fieldset>
 
         <div class="tweaks">
@@ -193,6 +231,7 @@
       </div>
 
       <div class="results" id="results" hidden>
+        <div class="alts reveal" id="alts" role="radiogroup" data-i18n-aria="alts.label" aria-label="Güzergahlar" hidden></div>
         <div class="verdict reveal">
           <div class="verdict-text">
             <h2 id="verdictTitle"></h2>
@@ -203,7 +242,10 @@
 
         <div class="cockpit reveal">
           <div class="car-view">
-            <svg id="carSvg" viewBox="0 0 300 300" role="img" data-i18n-aria="car.label" aria-label="Arabanın üstten görünüşü ve güneşin yönü"></svg>
+            <div class="sky" id="sky">
+              <div class="stars" aria-hidden="true"></div>
+              <svg id="carSvg" viewBox="0 0 300 300" role="img" data-i18n-aria="car.label" aria-label="Arabanın üstten görünüşü ve güneşin yönü"></svg>
+            </div>
             <div class="readout" id="readout"></div>
           </div>
           <div class="timeline">
@@ -255,6 +297,37 @@
             <p id="sweatText"></p>
           </article>
 
+          <article class="x x-cabin reveal" id="cabinCard">
+            <h3><i class="ph ph-thermometer-hot"></i> <span data-i18n="cabin.title">Kabin sıcaklığı</span></h3>
+            <p class="x-sub" id="cabinSub"></p>
+            <div class="chart-box" id="cabinChart"></div>
+            <p class="x-foot" id="cabinFoot"></p>
+          </article>
+
+          <article class="x x-tan reveal" id="tanCard">
+            <h3><i class="ph ph-person-simple"></i> <span data-i18n="tan.title">Bronzlaşma haritası</span></h3>
+            <div class="tan-grid">
+              <div id="tanFig"></div>
+              <div class="tan-info">
+                <p class="tan-who" id="tanWho"></p>
+                <p class="tan-spf" id="tanSpf"></p>
+                <p class="x-foot" data-i18n="tan.foot">Cam UVB'nin çoğunu keser. Harita güneşin nereye vurduğunu gösterir; gerçek yanık riski daha düşüktür.</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="x x-season reveal" id="seasonCard">
+            <h3><i class="ph ph-calendar-dots"></i> <span data-i18n="season.title">Dört mevsim</span></h3>
+            <p class="x-sub" id="seasonSub"></p>
+            <div class="season-wrap"><table class="season" id="seasonTable"></table></div>
+            <p class="x-foot" data-i18n="season.foot">Aynı yol, aynı saat. Mevsim karşılaştırmasında açık hava varsayılır.</p>
+          </article>
+
+          <article class="x x-badges reveal" id="badgesCard">
+            <h3><i class="ph ph-medal"></i> <span data-i18n="badges.title">Rozetler</span> <output id="badgeCount"></output></h3>
+            <ul class="badges" id="badgeList"></ul>
+          </article>
+
           <article class="x x-fact reveal" id="factCard">
             <h3><i class="ph ph-lightbulb"></i> <span data-i18n="fact.title">Biliyor muydun?</span></h3>
             <p id="factText"></p>
@@ -265,6 +338,31 @@
         <div class="share-row reveal">
           <button type="button" class="btn" id="shareBtn"><i class="ph ph-image-square"></i> <span data-i18n="share.card">Paylaşım kartı indir</span></button>
           <button type="button" class="btn btn-ghost" id="copyLink"><i class="ph ph-link-simple"></i> <span data-i18n="share.link">Bağlantıyı kopyala</span></button>
+          <button type="button" class="btn btn-ghost" id="saveRoute"><i class="ph ph-star"></i> <span data-i18n="saved.save">Rotayı kaydet</span></button>
+        </div>
+      </div>
+
+      <div class="park-results" id="parkResults" hidden>
+        <div class="verdict reveal">
+          <div class="verdict-text">
+            <h2 id="parkTitle"></h2>
+            <p id="parkSub"></p>
+          </div>
+          <dl class="trip-meta" id="parkMeta"></dl>
+        </div>
+        <div class="park-grid">
+          <article class="x x-rose reveal">
+            <h3><i class="ph ph-compass"></i> <span data-i18n="park.rose">Hangi yöne park etmeli?</span></h3>
+            <p class="x-sub" data-i18n="park.roseSub">Her dilim, arabanın burnu o yöne bakarsa direksiyonun ve koltukların ne kadar güneş alacağını gösterir.</p>
+            <div class="rose-box" id="parkRose"></div>
+            <p class="rose-read" id="roseRead" aria-live="polite"></p>
+          </article>
+          <article class="x x-parktemp reveal">
+            <h3><i class="ph ph-thermometer-hot"></i> <span data-i18n="park.temp">Döndüğünde kabin</span></h3>
+            <p class="x-sub" id="parkTempSub"></p>
+            <div class="chart-box" id="parkChart"></div>
+            <p class="x-foot" id="parkFoot"></p>
+          </article>
         </div>
       </div>
     </section>

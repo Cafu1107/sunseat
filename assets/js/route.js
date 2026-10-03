@@ -15,18 +15,20 @@ export function bearing(a, b) {
   return ((Math.atan2(y, x) / RAD) + 360) % 360;
 }
 
-export async function fetchRoute(from, to, signal) {
+// En fazla 3 güzergah döner (ilki OSRM'nin önerdiği).
+export async function fetchRoutes(from, to, signal) {
   const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}` +
-    '?overview=full&geometries=geojson&annotations=duration,distance&steps=false';
+    '?overview=full&geometries=geojson&annotations=duration,distance&steps=false&alternatives=2';
   const res = await fetch(url, { signal });
   if (res.status === 429) throw Object.assign(new Error('busy'), { code: 'busy' });
   if (!res.ok) throw Object.assign(new Error('route'), { code: 'route' });
   const j = await res.json();
   if (j.code !== 'Ok' || !j.routes || !j.routes.length) throw Object.assign(new Error('noroute'), { code: 'noroute' });
-  const r = j.routes[0];
-  const coords = r.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
-  const ann = r.legs && r.legs[0] && r.legs[0].annotation;
-  return prepare(coords, ann && ann.duration, ann && ann.distance, r.duration);
+  return j.routes.slice(0, 3).map((r) => {
+    const coords = r.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+    const ann = r.legs && r.legs[0] && r.legs[0].annotation;
+    return prepare(coords, ann && ann.duration, ann && ann.distance, r.duration);
+  });
 }
 
 function prepare(coords, durs, dists, totalDur) {

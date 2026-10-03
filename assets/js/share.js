@@ -74,8 +74,9 @@ export async function makeShareCard(d) {
 
   // Koltuk listesi
   const maxDose = Math.max(...d.seats.map((s) => s.dose), 1);
+  const rowH = d.seats.length > 5 ? 72 : 96;
   d.seats.forEach((s, i) => {
-    const rowY = y + i * 96;
+    const rowY = y + i * rowH;
     ctx.fillStyle = heat(s.avg);
     roundRect(ctx, P, rowY, 64, 64, 14); ctx.fill();
     ctx.fillStyle = s.avg > 0.6 ? '#fff' : '#16191c';
@@ -96,7 +97,7 @@ export async function makeShareCard(d) {
     ctx.fillText(`${Math.round(s.dose)} ${d.minLabel}`, W - P, rowY + 46);
     ctx.textAlign = 'left';
   });
-  y += d.seats.length * 96 + 30;
+  y += d.seats.length * rowH + 30;
 
   // Hüküm
   ctx.fillStyle = '#f5b800';

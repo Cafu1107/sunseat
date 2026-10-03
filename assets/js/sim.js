@@ -112,6 +112,24 @@ export function departureScan({ samples, depart, car, opts, weather, seat }) {
   return out;
 }
 
+// Aynı yol, aynı saat, dört mevsim (açık hava varsayılır).
+export function seasonScan({ samples, depart, car, opts, withChosen = false }) {
+  const d = new Date(depart);
+  const y = d.getFullYear();
+  const days = [
+    { id: 'spring', m: 2, day: 20 },
+    { id: 'summer', m: 5, day: 21 },
+    { id: 'autumn', m: 8, day: 23 },
+    { id: 'winter', m: 11, day: 21 },
+  ];
+  if (withChosen) days.unshift({ id: 'chosen' });
+  return days.map((s) => {
+    const at = s.id === 'chosen' ? depart : new Date(y, s.m, s.day, d.getHours(), d.getMinutes()).getTime();
+    const r = simulate({ samples, depart: at, car, opts, weather: null, detail: false });
+    return { id: s.id, ms: at, dose: r.dose };
+  });
+}
+
 // Aile modu: sürücü sabit, gölgeciler en serin koltuklara, güneşseverler en sıcaklara.
 export function seatFamily(people, dose) {
   const seats = dose.map((d, i) => ({ i, d }));
@@ -126,8 +144,8 @@ export function seatFamily(people, dose) {
   for (const p of sorted.filter((x) => x.pref === 'shade')) { const s = pool.shift(); if (s) result[s.i] = { ...p, seat: s.i }; }
   for (const p of sorted.filter((x) => x.pref === 'sun').reverse()) { const s = pool.pop(); if (s) result[s.i] = { ...p, seat: s.i }; }
   for (const p of sorted.filter((x) => x.pref === 'any')) {
-    // Orta koltuk en son dolsun, kimse ortada oturmak istemez.
-    const idx = pool.findIndex((s) => s.i !== 3);
+    // Orta koltuk ve üçüncü sıra en son dolsun.
+    const idx = pool.findIndex((s) => s.i !== 3 && s.i < 5);
     const s = idx >= 0 ? pool.splice(idx, 1)[0] : pool.shift();
     if (s) result[s.i] = { ...p, seat: s.i };
   }

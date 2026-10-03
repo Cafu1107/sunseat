@@ -9,7 +9,21 @@ export const BODIES = {
   van:      { wsRake: 48, sideMax: 64, glass: 1.3,  rw: [0, -0.98, 0.2],  rwMax: 48, len: 1.08, wid: 1.04, roofFrom: 0.26, roofTo: 0.92 },
   roadster: { wsRake: 62, sideMax: 48, glass: 0.85, rw: [0, -0.5, 0.87],  rwMax: 66, len: 0.84, wid: 0.95, roofFrom: 0.40, roofTo: 0.64 },
   retro:    { wsRake: 45, sideMax: 66, glass: 1.28, rw: [0, -0.8, 0.6],   rwMax: 60, len: 0.98, wid: 0.92, roofFrom: 0.32, roofTo: 0.70 },
+  mpv:      { wsRake: 55, sideMax: 58, glass: 1.15, rw: [0, -0.95, 0.31], rwMax: 52, len: 1.12, wid: 1.02, roofFrom: 0.27, roofTo: 0.90 },
 };
+
+export const BODY_KEYS = Object.keys(BODIES);
+
+// Boya rengi: abs = güneş ışınımı soğurma oranı (yaklaşık). Kabin ısınmasını etkiler.
+export const COLORS = [
+  { id: 'white',  hex: '#eef0f2', abs: 0.25, name: { tr: 'Beyaz', en: 'White' } },
+  { id: 'silver', hex: '#bfc5cb', abs: 0.45, name: { tr: 'Gümüş', en: 'Silver' } },
+  { id: 'red',    hex: '#b3261e', abs: 0.65, name: { tr: 'Kırmızı', en: 'Red' } },
+  { id: 'grey',   hex: '#5f666d', abs: 0.72, name: { tr: 'Füme', en: 'Grey' } },
+  { id: 'navy',   hex: '#1f3f73', abs: 0.8,  name: { tr: 'Lacivert', en: 'Navy' } },
+  { id: 'black',  hex: '#17191c', abs: 0.93, name: { tr: 'Siyah', en: 'Black' } },
+];
+export const colorById = (id) => COLORS.find((c) => c.id === id) || COLORS[1];
 
 // Yan profil çizimleri (viewBox 0 0 120 48). Elle çizildi, birebir model değil, karakter yakalamak için.
 export const SILHOUETTES = {
@@ -48,6 +62,11 @@ export const SILHOUETTES = {
     glass: 'M44 12 L60 12 L60 22 L37.5 22 Z M63 12 L81 12 L89 22 L63 22 Z',
     wheels: [28, 92], r: 6.5,
   },
+  mpv: {
+    body: 'M5 36 C5 28 7 25 15 24 L32 21 L43 9 C46 6.5 49 6 55 6 L108 6.5 C111 6.5 113 8 113.5 11 L115 23 C116 25 116 28 116 31 L116 36 Z',
+    glass: 'M45 10 C47 8.5 50 8 55 8 L64 8 L64 19.5 L36 19.5 Z M67 8 L82 8 L82 19.5 L67 19.5 Z M85 8 L96 8 L96 19.5 L85 19.5 Z M99 8 L107 8.3 C109 8.5 110 9.5 110.4 11 L111.5 19.5 L99 19.5 Z',
+    wheels: [28, 96], r: 7.5,
+  },
 };
 
 // roof: metal | pano (açılır perdeli panoramik cam) | glass (tamamı cam) | soft (kumaş, açılır)
@@ -62,6 +81,12 @@ export const CARS = [
   { id: 'corolla', name: 'Toyota Corolla', body: 'sedan', seats: 5, roof: 'metal', privacy: false, ac: true,
     tag: { tr: 'Sedan', en: 'Sedan' },
     note: { tr: 'Sakin ve öngörülebilir. Güneş de öyle: her sabah aynı taraftan doğar.', en: 'Calm and predictable. So is the sun: same side every morning.' } },
+  { id: 'i20', name: 'Hyundai i20', body: 'hatch', seats: 5, roof: 'metal', privacy: false, ac: true,
+    tag: { tr: 'Hatchback', en: 'Hatchback' },
+    note: { tr: 'İzmit\'te üretilen şehir arabası. Küçük ama camları cömert.', en: 'A city car built in Izmit, Turkey. Small, but generous with glass.' } },
+  { id: 'jogger', name: 'Dacia Jogger', body: 'mpv', seats: 7, roof: 'metal', privacy: false, ac: true,
+    tag: { tr: '7 koltuk', en: '7 seats' },
+    note: { tr: 'Yedi koltuk, uzun kabin. Üçüncü sıra, arka camın hemen önünde oturur.', en: 'Seven seats, long cabin. The third row sits right in front of the tailgate glass.' } },
   { id: 'passat', name: 'VW Passat Variant', body: 'station', seats: 5, roof: 'metal', privacy: false, ac: true,
     tag: { tr: 'Station', en: 'Estate' },
     note: { tr: 'Uzun tavan, upuzun arka cam. Bagajdaki karpuz da bronzlaşır.', en: 'Long roof, long rear glass. Even the watermelon in the boot gets a tan.' } },
@@ -85,4 +110,19 @@ export const CARS = [
     note: { tr: 'Klima yok, cam kolu var. İnce direkler, kocaman camlar. Terleme endeksi açıldı.', en: 'No AC, just a window crank. Thin pillars, huge glass. Sweat index unlocked.' } },
 ];
 
-export const carById = (id) => CARS.find((c) => c.id === id) || CARS[0];
+// Kullanıcının tarif ettiği araba.
+export const CUSTOM_DEFAULT = { body: 'suv', roof: 'metal', privacy: false, ac: true, seats: 5 };
+export function makeCustom(c = CUSTOM_DEFAULT) {
+  const seats = c.body === 'roadster' ? 2 : [2, 5, 7].includes(+c.seats) ? +c.seats : 5;
+  return {
+    id: 'custom', name: null, body: BODIES[c.body] ? c.body : 'suv', seats,
+    roof: ['metal', 'pano', 'glass', 'soft'].includes(c.roof) ? c.roof : 'metal',
+    privacy: !!c.privacy, ac: c.ac !== false, custom: true,
+    tag: { tr: 'Senin tarifin', en: 'Your recipe' },
+    note: { tr: 'Kasayı, tavanı, camları ve koltuk sayısını sen belirledin.', en: 'You picked the body, roof, glass and seat count.' },
+  };
+}
+
+let customCar = makeCustom();
+export const setCustom = (c) => { customCar = makeCustom(c); return customCar; };
+export const carById = (id) => (id === 'custom' ? customCar : CARS.find((c) => c.id === id) || CARS[0]);

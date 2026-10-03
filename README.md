@@ -23,6 +23,7 @@
 
 | | |
 |---|---|
+| 📍 **Ayrıntılı konum** | Sokak ve kapı numarasıyla arama, "Haritadan seç" modu (haritayı kaydır, iğne tam noktaya otursun), GPS ile konumum, koordinat yapıştırma, son kullanılan yerler. |
 | 🗺️ **Harita** | Rota, seçtiğin koltuğun güneş miktarına göre renklenir. Üzerine gel, araba o noktaya gider. |
 | 🚗 **Üstten araba** | Güneş arabanın etrafında döner, ışık alan camlar ve koltuklar canlı olarak boyanır. ▶ ile yolculuğu oynat. |
 | 📊 **Koltuk şeritleri** | 5 koltuğun zaman çizelgesi ve "tam güneş dakikası" toplamı. |

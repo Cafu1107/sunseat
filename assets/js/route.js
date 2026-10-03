@@ -87,36 +87,69 @@ export function sampleRoute(route) {
 }
 
 // ---------- Adres arama ----------
+// Sonuç türü: listede ikon seçmek ve sıralamak için.
+function placeKind(p) {
+  const k = p.osm_key, v = p.osm_value;
+  if (k === 'place') {
+    if (v === 'city' || v === 'town') return 'city';
+    if (['village', 'hamlet', 'isolated_dwelling', 'farm'].includes(v)) return 'village';
+    if (['country', 'state', 'province', 'region'].includes(v)) return 'region';
+    return 'area';
+  }
+  if (k === 'boundary') return 'area';
+  if (k === 'highway' && p.type === 'street') return 'street';
+  if (!p.name && p.housenumber) return 'house';
+  return 'poi';
+}
+
 function placeLabel(p) {
-  const main = p.name || p.street || p.city || p.county || p.state || '';
-  const ctx = [p.city !== main ? p.city : null, p.county !== main ? p.county : null, p.state !== main ? p.state : null, p.country]
-    .filter(Boolean);
-  const uniq = [...new Set(ctx)].slice(0, 2);
+  const streetNo = p.street ? p.street + (p.housenumber ? ` No:${p.housenumber}` : '') : null;
+  const main = p.name || streetNo || p.district || p.city || p.county || p.state || '';
+  const ctx = [p.name ? streetNo : null, p.district, p.locality, p.city, p.county, p.state]
+    .filter((x) => x && x !== main && !main.includes(x));
+  const uniq = [...new Set(ctx)].slice(0, 3);
   return { name: main, detail: uniq.join(', ') };
 }
 
-export async function searchPlaces(q, lang, signal) {
-  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=6&lat=39.9&lon=32.8` + (lang === 'en' ? '&lang=en' : '');
+function toPlace(f) {
+  const p = f.properties || {};
+  const l = placeLabel(p);
+  return { name: l.name, detail: l.detail, kind: placeKind(p), lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] };
+}
+
+// Photon köyleri bazen ilçe merkezinden önce getiriyor ("Sapanca" -> Diyarbakır'daki köy).
+// Şehir/ilçe sonuçlarını biraz öne alıp aynı yerin tekrarlarını ayıklıyoruz.
+export async function searchPlaces(q, lang, signal, bias) {
+  let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=12` + (lang === 'en' ? '&lang=en' : '&lang=default');
+  if (bias) url += `&lat=${bias.lat.toFixed(4)}&lon=${bias.lng.toFixed(4)}&zoom=${Math.round(bias.zoom)}&location_bias_scale=0.25`;
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error('geo');
   const j = await res.json();
-  return (j.features || []).map((f) => {
-    const l = placeLabel(f.properties || {});
-    return { name: l.name, detail: l.detail, lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] };
-  }).filter((p) => p.name);
+  const boost = { city: 3.5, region: 1, area: 0.5 };
+  const seen = new Set();
+  return (j.features || [])
+    .map((f, i) => ({ ...toPlace(f), score: i - (boost[placeKind(f.properties || {})] || 0) }))
+    .filter((p) => p.name)
+    .sort((a, b) => a.score - b.score)
+    .filter((p) => {
+      const key = `${p.kind === 'street' ? 'st' : p.kind}|${p.name}|${p.detail.split(',').slice(0, 2).join(',')}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 7);
 }
 
 export async function reversePlace(lat, lng, lang) {
   try {
-    const url = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}&limit=1` + (lang === 'en' ? '&lang=en' : '');
+    const url = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}&limit=1` + (lang === 'en' ? '&lang=en' : '&lang=default');
     const res = await fetch(url);
     const j = await res.json();
     const f = j.features && j.features[0];
     if (f) {
-      const p = f.properties || {};
-      const name = [p.name || p.street, p.city || p.county || p.state].filter(Boolean);
-      if (name.length) return [...new Set(name)].join(', ');
+      const p = toPlace(f);
+      if (p.name) return { name: p.name, detail: p.detail };
     }
   } catch (e) { /* koordinatla devam */ }
-  return `${lat.toFixed(3)}, ${lng.toFixed(3)}`;
+  return { name: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, detail: '' };
 }

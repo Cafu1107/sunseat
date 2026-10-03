@@ -231,11 +231,34 @@ input:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%
   max-height: 260px; overflow-y: auto;
 }
 .suggest:empty { display: none; }
-.suggest li { padding: 9px 10px; border-radius: 8px; cursor: pointer; display: grid; gap: 1px; }
-.suggest li b { font-weight: 600; }
-.suggest li small { color: var(--muted); font-size: 12.5px; }
-.suggest li[aria-selected="true"], .suggest li:hover { background: var(--surface-2); }
+.suggest li {
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 0 10px; align-items: center;
+}
+.suggest li > i { grid-row: span 2; font-size: 18px; color: var(--muted); justify-self: center; }
+.suggest li b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.suggest li small { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.suggest li[aria-selected="true"], .suggest li:not(.s-info):not(.s-head):hover { background: var(--surface-2); }
+.suggest li[aria-selected="true"] > i { color: var(--accent-strong); }
+.suggest .s-action b { color: var(--ink); }
+.suggest .s-action > i { color: var(--accent-strong); }
 .suggest .s-info { color: var(--muted); cursor: default; font-size: 13px; }
+.suggest .s-head { display: block; cursor: default; padding: 8px 10px 2px; font: 600 11px var(--font-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.suggest .s-sep { height: 1px; background: var(--line); margin: 4px 6px; padding: 0; cursor: default; display: block; }
+
+.place input { padding-right: 46px; }
+#from { padding-right: 84px; }
+.field-tools { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); display: flex; gap: 2px; z-index: 2; }
+.tool {
+  width: 36px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 8px;
+  background: transparent; color: var(--ink-2); cursor: pointer; font-size: 19px;
+  transition: background-color .2s, color .2s, transform .15s;
+}
+.tool:hover { background: var(--surface-2); color: var(--ink); }
+.tool:active { transform: scale(.92); }
+.tool.busy i { animation: spin-slow 1s linear infinite; color: var(--accent-strong); }
+.tool.active { background: var(--accent); color: var(--accent-ink); }
+@keyframes spin-slow { to { transform: rotate(360deg); } }
 
 .presets { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: -4px -2px 0; padding: 2px; }
 .presets::-webkit-scrollbar { display: none; }
@@ -404,6 +427,57 @@ input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.15); }
 .map-legend[hidden] { display: none; }
 .legend-bar { width: 90px; height: 8px; border-radius: var(--r-pill); background: linear-gradient(90deg, var(--heat-0), #f6d365, #f2a007, #e4572e, #a4161a); }
 .map-legend em { font-style: normal; font-weight: 600; color: var(--ink); }
+
+/* Haritadan seçme modu: ortada sabit iğne, alt tarafta adres çubuğu */
+.picker { position: absolute; inset: 0; z-index: 650; pointer-events: none; }
+.picker[hidden] { display: none; }
+.picker-target { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.picker-pin {
+  position: absolute; left: -19px; top: -50px; width: 38px; height: 38px;
+  border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
+  background: var(--ink); border: 3px solid #fff; box-shadow: 0 6px 14px rgb(0 0 0 / .35);
+  display: grid; place-items: center;
+  transition: translate .25s var(--ease-spring);
+}
+.picker-pin b { transform: rotate(45deg); font: 700 14px var(--font-mono); color: #fff; }
+.picker-pin.is-b { background: #f5b800; }
+.picker-pin.is-b b { color: #1c1708; }
+.picker-dot { position: absolute; left: -5px; top: -3px; width: 10px; height: 6px; border-radius: 50%; background: rgb(0 0 0 / .35); transition: transform .25s; }
+.picker.lifting .picker-pin { translate: 0 -10px; }
+.picker.lifting .picker-dot { transform: scale(.6); }
+.picker-tip {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 100px);
+  background: var(--ink); color: var(--bg); padding: 7px 14px; border-radius: var(--r-pill);
+  font-size: 13px; font-weight: 500; text-align: center; box-shadow: var(--shadow);
+}
+.picker-bar {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; pointer-events: auto;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-panel);
+  padding: 12px 12px 12px 16px; box-shadow: var(--shadow);
+}
+.picker-info { display: grid; gap: 1px; min-width: 0; flex: 1 1 220px; }
+.picker-info small { font-size: 12px; color: var(--muted); font-weight: 600; }
+.picker-info b { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.picker-info span { font: 500 12px var(--font-mono); color: var(--muted); }
+.picker-actions { display: flex; gap: 8px; flex: none; }
+.picker-actions .btn { height: 42px; padding: 0 16px; }
+.btn-accent { background: var(--accent); color: var(--accent-ink); }
+.map-wrap.is-picking { outline: 3px solid var(--accent); outline-offset: -3px; }
+.map-wrap.is-picking .map-legend { display: none; }
+
+/* Haritaya dokununca çıkan küçük menü */
+.sun-pop .leaflet-popup-content-wrapper { background: var(--surface); color: var(--ink); border-radius: 14px; box-shadow: var(--shadow); padding: 0; }
+.sun-pop .leaflet-popup-content { margin: 6px; }
+.sun-pop .leaflet-popup-tip { background: var(--surface); }
+.pick-pop { display: grid; gap: 4px; min-width: 170px; }
+.pick-pop small { font-size: 11.5px; color: var(--muted); padding: 4px 8px 2px; font-family: var(--font-mono); }
+.pick-pop button {
+  display: flex; align-items: center; gap: 10px; border: 0; background: none; cursor: pointer;
+  padding: 8px; border-radius: 9px; font: 600 14px var(--font-body); color: var(--ink); text-align: left;
+}
+.pick-pop button:hover { background: var(--surface-2); }
+.pick-pop .mk-pin { width: 24px; height: 24px; font-size: 11px; border-width: 1.5px; box-shadow: none; }
 
 /* Harita işaretleri */
 .mk-pin {
@@ -691,6 +765,9 @@ input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.15); }
   .wordmark { font-size: 20px; }
   .verdict { grid-template-columns: minmax(0, 1fr); padding: 22px 18px 20px; }
   .map-wrap { height: 52vh; min-height: 320px; }
+  .map-wrap.is-picking { height: 72vh; }
+  .picker-actions { width: 100%; }
+  .picker-actions .btn { flex: 1; justify-content: center; }
   .car-view { grid-template-columns: minmax(0, 1fr); }
   #carSvg { max-width: 300px; justify-self: center; }
   .timeline { padding: 16px 14px; }

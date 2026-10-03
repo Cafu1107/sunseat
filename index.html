@@ -80,6 +80,10 @@
             <div class="input-wrap">
               <span class="pin pin-a" aria-hidden="true">A</span>
               <input id="from" type="text" inputmode="search" data-i18n-ph="form.fromPh" placeholder="İstanbul, Kadıköy..." aria-autocomplete="list" aria-controls="fromSuggest" aria-expanded="false" role="combobox">
+              <div class="field-tools">
+                <button type="button" class="tool" data-gps="from" data-i18n-aria="pick.gps" aria-label="Konumumu kullan"><i class="ph ph-navigation-arrow"></i></button>
+                <button type="button" class="tool" data-pick="from" data-i18n-aria="pick.map" aria-label="Haritadan seç"><i class="ph ph-crosshair-simple"></i></button>
+              </div>
               <ul class="suggest" id="fromSuggest" role="listbox"></ul>
             </div>
           </div>
@@ -91,13 +95,16 @@
             <div class="input-wrap">
               <span class="pin pin-b" aria-hidden="true">B</span>
               <input id="to" type="text" inputmode="search" data-i18n-ph="form.toPh" placeholder="Sakarya, Sapanca..." aria-autocomplete="list" aria-controls="toSuggest" aria-expanded="false" role="combobox">
+              <div class="field-tools">
+                <button type="button" class="tool" data-pick="to" data-i18n-aria="pick.map" aria-label="Haritadan seç"><i class="ph ph-crosshair-simple"></i></button>
+              </div>
               <ul class="suggest" id="toSuggest" role="listbox"></ul>
             </div>
           </div>
         </fieldset>
 
         <div class="presets" id="presets" role="group" data-i18n-aria="form.presets" aria-label="Hazır rotalar"></div>
-        <p class="hint"><i class="ph ph-hand-tap"></i> <span data-i18n="form.mapHint">Haritaya dokunarak da nokta seçebilirsin.</span></p>
+        <p class="hint"><i class="ph ph-hand-tap"></i> <span data-i18n="form.mapHint">Tam nokta için kutudaki hedef işaretine bas ya da haritaya dokun.</span></p>
 
         <div class="field-row">
           <div class="field">
@@ -141,6 +148,24 @@
     <section class="stage" aria-live="polite">
       <div class="map-wrap">
         <div id="map" role="application" data-i18n-aria="map.label" aria-label="Rota haritası"></div>
+        <div class="picker" id="picker" hidden>
+          <div class="picker-target" aria-hidden="true">
+            <span class="picker-pin" id="pickerPin"><b>A</b></span>
+            <span class="picker-dot"></span>
+          </div>
+          <p class="picker-tip" data-i18n="pick.tip">Haritayı kaydır, iğneyi tam noktaya getir.</p>
+          <div class="picker-bar" role="dialog" aria-labelledby="pickerTitle">
+            <div class="picker-info">
+              <small id="pickerTitle"></small>
+              <b id="pickerAddr"></b>
+              <span id="pickerCoord"></span>
+            </div>
+            <div class="picker-actions">
+              <button type="button" class="btn btn-ghost" id="pickerCancel" data-i18n="pick.cancel">Vazgeç</button>
+              <button type="button" class="btn btn-accent" id="pickerOk"><i class="ph-fill ph-check-circle"></i> <span data-i18n="pick.ok">Burayı seç</span></button>
+            </div>
+          </div>
+        </div>
         <div class="map-loading" id="mapLoading" hidden>
           <div class="road" aria-hidden="true"><span></span></div>
           <p id="loadingText" data-i18n="map.loading">Rota çiziliyor</p>

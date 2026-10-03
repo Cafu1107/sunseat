@@ -92,41 +92,159 @@ function initMap() {
 
 const pinIcon = (letter, cls) => L.divIcon({ className: '', html: `<div class="mk-pin ${cls}">${letter}</div>`, iconSize: [30, 30], iconAnchor: [3, 30] });
 
-function placeMarkers() {
+const placeText = (p) => (p.detail ? `${p.name}, ${p.detail.split(',')[0]}` : p.name);
+
+// focus: bu noktaya yakınlaş (rota yokken). zoom: yakınlaşma seviyesi.
+function placeMarkers(focus, zoom = 15) {
   const upd = (which, marker, letter, cls) => {
     const p = state[which];
     if (!p) { if (marker) map.removeLayer(marker); return null; }
     if (marker) { marker.setLatLng([p.lat, p.lng]); return marker; }
-    const m = L.marker([p.lat, p.lng], { icon: pinIcon(letter, cls), draggable: true, keyboard: false }).addTo(map);
-    m.on('dragend', async () => {
+    const m = L.marker([p.lat, p.lng], { icon: pinIcon(letter, cls), draggable: true, keyboard: false, zIndexOffset: 500 }).addTo(map);
+    m.on('dragend', () => {
       const ll = m.getLatLng();
-      const name = await reversePlace(ll.lat, ll.lng, getLang());
-      state[which] = { name, lat: ll.lat, lng: ll.lng };
-      $(which).value = name;
-      if (state.sim) run();
+      setPoint(which, { lat: ll.lat, lng: ll.lng }, { fly: false });
     });
     return m;
   };
   markerA = upd('from', markerA, 'A', 'mk-a');
   markerB = upd('to', markerB, 'B', 'mk-b');
-  if (!state.sim) {
-    if (state.from && state.to) map.fitBounds([[state.from.lat, state.from.lng], [state.to.lat, state.to.lng]], { padding: [60, 60], maxZoom: 11 });
-    else if (state.from || state.to) { const p = state.from || state.to; map.setView([p.lat, p.lng], Math.max(map.getZoom(), 8)); }
+  if (state.sim) return;
+  if (state.from && state.to && !focus) {
+    map.fitBounds([[state.from.lat, state.from.lng], [state.to.lat, state.to.lng]], { padding: [60, 60], maxZoom: 13 });
+  } else if (focus && state[focus]) {
+    const p = state[focus];
+    map.flyTo([p.lat, p.lng], zoom, { duration: reduceMotion() ? 0 : 0.8 });
   }
 }
 
-async function onMapClick(e) {
-  const which = !state.from ? 'from' : 'to';
-  const { lat, lng } = e.latlng;
-  state[which] = { name: `${lat.toFixed(3)}, ${lng.toFixed(3)}`, lat, lng };
-  $(which).value = state[which].name;
-  placeMarkers();
-  const name = await reversePlace(lat, lng, getLang());
-  if (state[which] && state[which].lat === lat) {
-    state[which].name = name;
-    $(which).value = name;
+// Bir noktayı A ya da B yapar. İsim yoksa adresini sonradan bulur.
+let dragTipShown = false;
+async function setPoint(which, place, { fly = true, zoom = 15, remember = true, rerun = true } = {}) {
+  const p = { name: place.name || `${place.lat.toFixed(5)}, ${place.lng.toFixed(5)}`, detail: place.detail || '', lat: place.lat, lng: place.lng };
+  state[which] = p;
+  $(which).value = placeText(p);
+  placeMarkers(fly ? which : null, zoom);
+  if (!dragTipShown && !state.sim) {
+    dragTipShown = true;
+    setTimeout(() => toast(t('pick.dragTip')), 900);
   }
-  toast(t(which === 'from' ? 'map.pickFrom' : 'map.pickTo', { name }));
+  if (!place.name) {
+    const r = await reversePlace(p.lat, p.lng, getLang());
+    if (state[which] !== p) return;
+    p.name = r.name; p.detail = r.detail;
+    $(which).value = placeText(p);
+  }
+  if (remember) rememberPlace(p);
+  if (rerun && state.sim && state.from && state.to) run();
+}
+
+// Son kullanılan yerler (sadece bu tarayıcıda).
+function recentPlaces() {
+  try { return JSON.parse(store.get('sunseat.recent') || '[]').slice(0, 5); } catch (e) { return []; }
+}
+function rememberPlace(p) {
+  if (!p.name || /^-?\d+\.\d+, -?\d+\.\d+$/.test(p.name)) return;
+  const list = recentPlaces().filter((x) => Math.abs(x.lat - p.lat) > 1e-4 || Math.abs(x.lng - p.lng) > 1e-4);
+  list.unshift({ name: p.name, detail: p.detail || '', lat: p.lat, lng: p.lng });
+  store.set('sunseat.recent', JSON.stringify(list.slice(0, 5)));
+}
+
+// Haritaya dokununca: "Buradan çık / Buraya git".
+function onMapClick(e) {
+  if (picking) return;
+  const { lat, lng } = e.latlng;
+  const div = document.createElement('div');
+  div.className = 'pick-pop';
+  div.innerHTML = `<small>${lat.toFixed(5)}, ${lng.toFixed(5)}</small>
+    <button type="button" data-w="from"><span class="mk-pin mk-a">A</span>${t('pick.setFrom')}</button>
+    <button type="button" data-w="to"><span class="mk-pin mk-b">B</span>${t('pick.setTo')}</button>`;
+  const pop = L.popup({ closeButton: false, className: 'sun-pop', offset: [0, -2], autoPanPadding: [20, 20] })
+    .setLatLng(e.latlng).setContent(div).openOn(map);
+  div.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    map.closePopup(pop);
+    setPoint(b.dataset.w, { lat, lng }, { fly: false });
+  }));
+}
+
+// ---------- Haritadan tam nokta seçme ----------
+let picking = null, pickTimer, pickSeq = 0, pickResolved = null;
+function startPick(which) {
+  if (picking) finishPick(false);
+  stopPlay();
+  picking = which;
+  map.closePopup();
+  const own = state[which], other = state[which === 'from' ? 'to' : 'from'];
+  if (own) map.setView([own.lat, own.lng], Math.max(map.getZoom(), 16));
+  else if (other && !state.sim) map.setView([other.lat, other.lng], Math.max(map.getZoom(), 12));
+  else if (map.getZoom() < 11) map.setZoom(11);
+  const marker = which === 'from' ? markerA : markerB;
+  if (marker) marker.setOpacity(0);
+
+  const pin = $('pickerPin');
+  pin.classList.toggle('is-b', which === 'to');
+  pin.querySelector('b').textContent = which === 'from' ? 'A' : 'B';
+  $('pickerTitle').textContent = t(which === 'from' ? 'pick.titleFrom' : 'pick.titleTo');
+  $('picker').hidden = false;
+  document.querySelector('.map-wrap').classList.add('is-picking');
+  document.querySelectorAll(`[data-pick="${which}"]`).forEach((b) => b.classList.add('active'));
+  setTimeout(() => map.invalidateSize(), 50);
+  map.on('movestart', onPickMoveStart);
+  map.on('moveend', onPickMoveEnd);
+  onPickMoveEnd();
+  const wrap = document.querySelector('.map-wrap');
+  const r = wrap.getBoundingClientRect();
+  if (r.top < 60 || r.bottom > window.innerHeight) wrap.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
+  $('pickerOk').focus({ preventScroll: true });
+}
+function onPickMoveStart() { $('picker').classList.add('lifting'); }
+function onPickMoveEnd() {
+  $('picker').classList.remove('lifting');
+  const c = map.getCenter();
+  $('pickerCoord').textContent = `${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}`;
+  $('pickerAddr').textContent = t('pick.looking');
+  pickResolved = null;
+  clearTimeout(pickTimer);
+  const seq = ++pickSeq;
+  pickTimer = setTimeout(async () => {
+    const r = await reversePlace(c.lat, c.lng, getLang());
+    if (seq !== pickSeq) return;
+    pickResolved = { ...r, lat: c.lat, lng: c.lng };
+    $('pickerAddr').textContent = placeText(r);
+  }, 350);
+}
+function finishPick(ok) {
+  if (!picking) return;
+  const which = picking;
+  picking = null;
+  clearTimeout(pickTimer);
+  map.off('movestart', onPickMoveStart);
+  map.off('moveend', onPickMoveEnd);
+  $('picker').hidden = true;
+  document.querySelector('.map-wrap').classList.remove('is-picking');
+  document.querySelectorAll('[data-pick]').forEach((b) => b.classList.remove('active'));
+  setTimeout(() => map.invalidateSize(), 50);
+  const marker = which === 'from' ? markerA : markerB;
+  if (marker) marker.setOpacity(1);
+  if (!ok) return;
+  const c = map.getCenter();
+  const same = pickResolved && Math.abs(pickResolved.lat - c.lat) < 1e-7 && Math.abs(pickResolved.lng - c.lng) < 1e-7;
+  setPoint(which, same ? pickResolved : { lat: c.lat, lng: c.lng }, { fly: false });
+}
+
+// ---------- Konumum ----------
+function locateMe(which, btn) {
+  if (!navigator.geolocation) { toast(t('gps.unsupported')); return; }
+  if (btn) btn.classList.add('busy');
+  navigator.geolocation.getCurrentPosition((pos) => {
+    if (btn) btn.classList.remove('busy');
+    const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+    setPoint(which, { lat, lng }, { zoom: 16 });
+    toast(t('gps.ok', { acc: Math.round(accuracy) }));
+  }, (err) => {
+    if (btn) btn.classList.remove('busy');
+    toast(t(err.code === 1 ? 'gps.denied' : 'gps.fail'));
+  }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
 }
 
 function carIcon() {
@@ -226,66 +344,128 @@ function selectCar(id) {
 }
 
 // ---------- Otomatik tamamlama ----------
+const KIND_ICON = {
+  city: 'ph-buildings', village: 'ph-house-line', area: 'ph-map-trifold', region: 'ph-globe-hemisphere-east',
+  street: 'ph-road-horizon', house: 'ph-house', poi: 'ph-map-pin', recent: 'ph-clock-counter-clockwise',
+  coord: 'ph-crosshair', gps: 'ph-navigation-arrow', map: 'ph-crosshair-simple',
+};
+const KIND_ZOOM = { city: 12, region: 8, area: 14, village: 14, street: 16, house: 18, poi: 17, recent: 16, coord: 17 };
+const COORD_RE = /^\s*(-?\d{1,2}(?:[.]\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:[.]\d+)?)\s*$/;
+
+// Haritanın baktığı yere hafif öncelik ver (yakınlaştırılmışsa).
+function searchBias() {
+  if (!map || map.getZoom() < 9) return null;
+  const c = map.getCenter();
+  return { lat: c.lat, lng: c.lng, zoom: map.getZoom() };
+}
+
 function setupAutocomplete(which) {
   const input = $(which), list = $(which + 'Suggest');
-  let timer, ctrl, items = [], active = -1;
+  let timer, ctrl, rows = [], active = -1;
 
-  const close = () => { list.innerHTML = ''; items = []; active = -1; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); };
+  const close = () => { list.innerHTML = ''; rows = []; active = -1; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); };
   const choose = (i) => {
-    const p = items[i];
-    if (!p) return;
-    state[which] = { name: p.name, lat: p.lat, lng: p.lng };
-    input.value = p.detail ? `${p.name}, ${p.detail.split(',')[0]}` : p.name;
+    const r = rows.filter((x) => x.act)[i];
+    if (!r) return;
     close();
-    placeMarkers();
+    r.act();
   };
+  // rows: { head } | { info } | { icon, name, detail, act }
   const paint = () => {
     list.innerHTML = '';
-    items.forEach((p, i) => {
+    let k = 0;
+    rows.forEach((r) => {
       const li = document.createElement('li');
-      li.id = `${which}-opt-${i}`;
-      li.setAttribute('role', 'option');
-      li.setAttribute('aria-selected', i === active ? 'true' : 'false');
-      li.innerHTML = `<b>${escapeHtml(p.name)}</b>${p.detail ? `<small>${escapeHtml(p.detail)}</small>` : ''}`;
-      li.addEventListener('mousedown', (ev) => { ev.preventDefault(); choose(i); });
+      if (r.sep) { li.className = 's-sep'; li.setAttribute('role', 'presentation'); }
+      else if (r.head) { li.className = 's-head'; li.textContent = r.head; li.setAttribute('role', 'presentation'); }
+      else if (r.info) { li.className = 's-info'; li.textContent = r.info; li.setAttribute('role', 'presentation'); }
+      else {
+        const idx = k++;
+        li.id = `${which}-opt-${idx}`;
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', idx === active ? 'true' : 'false');
+        if (r.action) li.classList.add('s-action');
+        li.innerHTML = `<i class="ph ${KIND_ICON[r.icon] || 'ph-map-pin'}"></i><b>${escapeHtml(r.name)}</b>${r.detail ? `<small>${escapeHtml(r.detail)}</small>` : ''}`;
+        li.addEventListener('mousedown', (ev) => { ev.preventDefault(); choose(idx); });
+      }
       list.appendChild(li);
     });
-    input.setAttribute('aria-expanded', items.length ? 'true' : 'false');
+    input.setAttribute('aria-expanded', rows.length ? 'true' : 'false');
     if (active >= 0) input.setAttribute('aria-activedescendant', `${which}-opt-${active}`);
+    else input.removeAttribute('aria-activedescendant');
+    const sel = list.querySelector('[aria-selected="true"]');
+    if (sel) sel.scrollIntoView({ block: 'nearest' });
+  };
+  const placeRow = (p, icon) => ({
+    icon, name: p.name, detail: p.detail,
+    act: () => setPoint(which, p, { zoom: KIND_ZOOM[p.kind || icon] || 15 }),
+  });
+  const actionRows = () => {
+    const out = [];
+    if (which === 'from') out.push({ icon: 'gps', name: t('ac.gps'), action: true, act: () => locateMe(which, document.querySelector(`[data-gps="${which}"]`)) });
+    out.push({ icon: 'map', name: t('ac.map'), action: true, act: () => startPick(which) });
+    return out;
+  };
+  // Boş kutuya odaklanınca: konumum, haritadan seç, son kullanılanlar.
+  const showStart = () => {
+    const recent = recentPlaces();
+    rows = [...actionRows()];
+    if (recent.length) rows.push({ head: t('ac.recent') }, ...recent.map((p) => placeRow(p, 'recent')));
+    active = -1;
+    paint();
   };
 
+  input.addEventListener('focus', () => { if (!input.value.trim()) showStart(); });
   input.addEventListener('input', () => {
     state[which] = null;
     clearTimeout(timer);
+    if (ctrl) ctrl.abort();
     const q = input.value.trim();
+    if (!q) { showStart(); return; }
+    const m = q.match(COORD_RE);
+    if (m && Math.abs(+m[1]) <= 90 && Math.abs(+m[2]) <= 180) {
+      rows = [{ icon: 'coord', name: `${(+m[1]).toFixed(5)}, ${(+m[2]).toFixed(5)}`, detail: t('ac.coord'), act: () => setPoint(which, { lat: +m[1], lng: +m[2] }, { zoom: 17 }) }];
+      active = 0;
+      paint();
+      return;
+    }
     if (q.length < 2) { close(); return; }
+    rows = [{ info: t('ac.loading') }];
+    active = -1;
+    paint();
     timer = setTimeout(async () => {
-      if (ctrl) ctrl.abort();
       ctrl = new AbortController();
       try {
-        items = await searchPlaces(q, getLang(), ctrl.signal);
+        const items = await searchPlaces(q, getLang(), ctrl.signal, searchBias());
+        rows = items.length ? items.map((p) => placeRow(p, p.kind)) : [{ info: t('ac.none') }];
+        rows.push({ sep: true }, ...actionRows());
         active = items.length ? 0 : -1;
         paint();
-      } catch (e) { if (e.name !== 'AbortError') close(); }
-    }, 260);
+      } catch (e) { if (e.name !== 'AbortError') { rows = [{ info: t('err.net') }]; paint(); } }
+    }, 250);
   });
   input.addEventListener('keydown', (e) => {
-    if (!items.length) return;
-    if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; paint(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; paint(); }
-    else if (e.key === 'Enter') { e.preventDefault(); choose(active < 0 ? 0 : active); }
+    const n = rows.filter((x) => x.act).length;
+    if (!n) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % n; paint(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + n) % n; paint(); }
+    else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); choose(active); }
     else if (e.key === 'Escape') close();
   });
-  input.addEventListener('blur', () => setTimeout(close, 120));
+  input.addEventListener('blur', () => setTimeout(close, 150));
 }
 
 async function resolvePlace(which) {
   if (state[which]) return state[which];
   const q = $(which).value.trim();
   if (!q) return null;
-  const res = await searchPlaces(q, getLang());
+  const m = q.match(COORD_RE);
+  if (m) { await setPoint(which, { lat: +m[1], lng: +m[2] }, { fly: false, rerun: false }); return state[which]; }
+  const res = await searchPlaces(q, getLang(), undefined, searchBias());
   if (!res.length) throw Object.assign(new Error('nf'), { code: 'notFound', q });
-  state[which] = { name: res[0].name, lat: res[0].lat, lng: res[0].lng };
+  const p = res[0];
+  state[which] = { name: p.name, detail: p.detail, lat: p.lat, lng: p.lng };
+  $(which).value = placeText(state[which]);
   placeMarkers();
   return state[which];
 }
@@ -878,6 +1058,17 @@ function init() {
 
   setupAutocomplete('from');
   setupAutocomplete('to');
+  document.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => {
+    if (picking === b.dataset.pick) finishPick(false); else startPick(b.dataset.pick);
+  }));
+  document.querySelectorAll('[data-gps]').forEach((b) => b.addEventListener('click', () => locateMe(b.dataset.gps, b)));
+  $('pickerOk').addEventListener('click', () => finishPick(true));
+  $('pickerCancel').addEventListener('click', () => finishPick(false));
+  document.addEventListener('keydown', (e) => {
+    if (!picking) return;
+    if (e.key === 'Escape') finishPick(false);
+    if (e.key === 'Enter' && document.activeElement && document.activeElement.closest('.picker-bar, #map')) { e.preventDefault(); finishPick(true); }
+  });
 
   $('tripForm').addEventListener('submit', (e) => { e.preventDefault(); run(); });
   $('swapBtn').addEventListener('click', () => {

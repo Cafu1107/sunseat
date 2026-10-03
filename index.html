@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sunseat</title>
+  <meta name="description" content="Yolculukta hangi koltuğa ne kadar güneş geleceğini rota, saat ve araba modeline göre hesaplar.">
+  <meta name="theme-color" content="#e8eaeb" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121416" media="(prefers-color-scheme: dark)">
+  <meta property="og:title" content="Sunseat">
+  <meta property="og:description" content="Güneş hangi koltuğa vuracak? Rotanı ve arabanı seç, dakika dakika gör.">
+  <meta property="og:image" content="https://cafu1107.github.io/sunseat/docs/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <script>
+    // Tema, sayfa çizilmeden önce uygulanır (yanıp sönmesin diye).
+    try { const th = localStorage.getItem('sunseat.theme'); if (th) document.documentElement.dataset.theme = th; } catch (e) {}
+  </script>
+</head>
+<body>
+  <a class="skip" href="#planner" data-i18n="a11y.skip">Forma geç</a>
+
+  <header class="topbar">
+    <a class="brand" href="./" id="brand" aria-label="Sunseat">
+      <svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
+        <defs>
+          <clipPath id="logoHorizon"><rect x="0" y="0" width="48" height="29"/></clipPath>
+        </defs>
+        <g class="logo-rays">
+          <line x1="24" y1="2.5" x2="24" y2="6.5"/>
+          <line x1="9.2" y1="8.6" x2="12" y2="11.4"/>
+          <line x1="38.8" y1="8.6" x2="36" y2="11.4"/>
+          <line x1="2.5" y1="24" x2="6.5" y2="24"/>
+          <line x1="41.5" y1="24" x2="45.5" y2="24"/>
+        </g>
+        <g clip-path="url(#logoHorizon)">
+          <circle class="logo-sun" cx="24" cy="29" r="9"/>
+        </g>
+        <circle class="logo-wheel" cx="24" cy="24" r="15.5"/>
+        <path class="logo-spoke" d="M8.8 29 H39.2 M24 29 V39.5"/>
+      </svg>
+      <span class="wordmark">Sun<span>seat</span></span>
+    </a>
+    <div class="topbar-actions">
+      <button class="lang-toggle" id="langToggle" type="button" aria-label="Dil / Language">
+        <span data-l="tr">TR</span><span data-l="en">EN</span>
+      </button>
+      <button class="headlight" id="themeToggle" type="button" data-i18n-aria="a11y.theme" aria-label="Farları aç / kapa">
+        <svg viewBox="0 0 32 32" aria-hidden="true">
+          <path class="hl-lamp" d="M15 8c-5 0-9 3.6-9 8s4 8 9 8c1.7 0 2.5-3.6 2.5-8S16.7 8 15 8Z"/>
+          <g class="hl-beams"><line x1="21" y1="10" x2="28" y2="9"/><line x1="21.5" y1="16" x2="29" y2="16"/><line x1="21" y1="22" x2="28" y2="23"/></g>
+        </svg>
+      </button>
+      <a class="gh" href="https://github.com/Cafu1107/sunseat" target="_blank" rel="noopener" aria-label="GitHub"><i class="ph ph-github-logo"></i></a>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="planner" id="planner">
+      <div class="intro">
+        <h1 data-i18n="hero.title">Güneş hangi koltuğa vuracak?</h1>
+        <p data-i18n="hero.sub">Rotanı ve arabanı seç. Yol boyunca her koltuğa ne kadar güneş geldiğini dakika dakika hesaplayalım.</p>
+      </div>
+
+      <form id="tripForm" novalidate autocomplete="off">
+        <fieldset class="route-fields">
+          <legend class="sr-only" data-i18n="form.route">Rota</legend>
+          <div class="lane" aria-hidden="true"></div>
+
+          <div class="field place">
+            <label for="from" data-i18n="form.from">Nereden</label>
+            <div class="input-wrap">
+              <span class="pin pin-a" aria-hidden="true">A</span>
+              <input id="from" type="text" inputmode="search" data-i18n-ph="form.fromPh" placeholder="İstanbul, Kadıköy..." aria-autocomplete="list" aria-controls="fromSuggest" aria-expanded="false" role="combobox">
+              <ul class="suggest" id="fromSuggest" role="listbox"></ul>
+            </div>
+          </div>
+
+          <button type="button" class="swap" id="swapBtn" data-i18n-aria="form.swap" aria-label="Yönü çevir"><i class="ph ph-arrows-down-up"></i></button>
+
+          <div class="field place">
+            <label for="to" data-i18n="form.to">Nereye</label>
+            <div class="input-wrap">
+              <span class="pin pin-b" aria-hidden="true">B</span>
+              <input id="to" type="text" inputmode="search" data-i18n-ph="form.toPh" placeholder="Sakarya, Sapanca..." aria-autocomplete="list" aria-controls="toSuggest" aria-expanded="false" role="combobox">
+              <ul class="suggest" id="toSuggest" role="listbox"></ul>
+            </div>
+          </div>
+        </fieldset>
+
+        <div class="presets" id="presets" role="group" data-i18n-aria="form.presets" aria-label="Hazır rotalar"></div>
+        <p class="hint"><i class="ph ph-hand-tap"></i> <span data-i18n="form.mapHint">Haritaya dokunarak da nokta seçebilirsin.</span></p>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="date" data-i18n="form.date">Tarih</label>
+            <input id="date" type="date" required>
+          </div>
+          <div class="field">
+            <label for="time" data-i18n="form.time">Çıkış saati</label>
+            <input id="time" type="time" step="300" required>
+          </div>
+        </div>
+
+        <fieldset class="cars">
+          <legend data-i18n="form.car">Araban</legend>
+          <div class="car-rail" id="carRail" role="radiogroup" data-i18n-aria="form.car" aria-label="Araban"></div>
+          <p class="car-note" id="carNote" aria-live="polite"></p>
+        </fieldset>
+
+        <div class="tweaks">
+          <div class="field">
+            <label for="tint"><span data-i18n="form.tint">Cam filmi koyuluğu</span> <output id="tintOut" for="tint">%0</output></label>
+            <input id="tint" type="range" min="0" max="80" step="5" value="0">
+          </div>
+          <label class="switch" id="roofSwitch" hidden>
+            <input type="checkbox" id="roofOpen">
+            <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+            <span id="roofLabel"></span>
+          </label>
+        </div>
+
+        <p class="form-error" id="formError" role="alert" hidden></p>
+
+        <button class="ignition" id="goBtn" type="submit">
+          <span class="key" aria-hidden="true"><i class="ph-fill ph-key"></i></span>
+          <span class="ignition-label" id="goLabel" data-i18n="form.go">Kontağı çevir</span>
+          <span class="gauge" aria-hidden="true"><span class="needle"></span></span>
+        </button>
+      </form>
+    </aside>
+
+    <section class="stage" aria-live="polite">
+      <div class="map-wrap">
+        <div id="map" role="application" data-i18n-aria="map.label" aria-label="Rota haritası"></div>
+        <div class="map-loading" id="mapLoading" hidden>
+          <div class="road" aria-hidden="true"><span></span></div>
+          <p id="loadingText" data-i18n="map.loading">Rota çiziliyor</p>
+        </div>
+        <div class="map-legend" id="mapLegend" hidden>
+          <span data-i18n="map.legendCool">gölge</span>
+          <span class="legend-bar" aria-hidden="true"></span>
+          <span data-i18n="map.legendHot">tam güneş</span>
+          <em id="legendSeat"></em>
+        </div>
+      </div>
+
+      <div class="empty" id="empty">
+        <svg class="empty-art" viewBox="0 0 240 90" aria-hidden="true">
+          <path class="ea-road" d="M0 70 H240"/>
+          <path class="ea-dash" d="M0 70 H240"/>
+          <circle class="ea-sun" cx="190" cy="34" r="14"/>
+          <g class="ea-car">
+            <path d="M40 62 C40 56 43 54 50 53 L62 51 L70 43 C72 41.5 74 41 78 41 L96 41 C100 41 102 42 104 44 L110 51 L120 52.5 C124 53 125 55 125 58 L125 62 Z"/>
+            <circle cx="58" cy="63" r="5.5"/><circle cx="110" cy="63" r="5.5"/>
+          </g>
+        </svg>
+        <h2 data-i18n="empty.title">Rota bekleniyor</h2>
+        <p data-i18n="empty.body">Soldan nereden nereye gideceğini seç ya da hazır rotalardan birine dokun. Sonra kontağı çevir.</p>
+      </div>
+
+      <div class="results" id="results" hidden>
+        <div class="verdict reveal">
+          <div class="verdict-text">
+            <h2 id="verdictTitle"></h2>
+            <p id="verdictSub"></p>
+          </div>
+          <dl class="trip-meta" id="tripMeta"></dl>
+        </div>
+
+        <div class="cockpit reveal">
+          <div class="car-view">
+            <svg id="carSvg" viewBox="0 0 300 300" role="img" data-i18n-aria="car.label" aria-label="Arabanın üstten görünüşü ve güneşin yönü"></svg>
+            <div class="readout" id="readout"></div>
+          </div>
+          <div class="timeline">
+            <div class="timeline-head">
+              <h3 data-i18n="tl.title">Koltuk koltuk güneş</h3>
+              <p data-i18n="tl.hint">Bir satıra dokun, o koltuk senin olsun. Harita onun rengine boyanır.</p>
+            </div>
+            <div class="strips" id="strips"></div>
+            <div class="scrub">
+              <button class="play" id="playBtn" type="button" data-i18n-aria="tl.play" aria-label="Yolculuğu oynat"><i class="ph-fill ph-play"></i></button>
+              <input type="range" id="scrub" min="0" max="100" value="0" data-i18n-aria="tl.scrub" aria-label="Yolculuk zamanı">
+              <output id="scrubTime" for="scrub"></output>
+            </div>
+          </div>
+        </div>
+
+        <div class="extras">
+          <article class="x x-best reveal" id="bestCard">
+            <h3><i class="ph ph-clock-countdown"></i> <span data-i18n="best.title">En iyi çıkış saati</span></h3>
+            <p id="bestText"></p>
+            <div class="best-chart" id="bestChart"></div>
+            <p class="x-foot" data-i18n="best.foot">Çubuğa dokun, o saatle yeniden hesaplansın.</p>
+          </article>
+
+          <article class="x x-glare reveal" id="glareCard">
+            <h3><i class="ph ph-sunglasses"></i> <span data-i18n="glare.title">Göz kamaşması</span></h3>
+            <ul id="glareList" class="glare-list"></ul>
+          </article>
+
+          <article class="x x-arm reveal" id="armCard">
+            <h3><i class="ph ph-hand-waving"></i> <span data-i18n="arm.title">Şoför kolu endeksi</span></h3>
+            <div class="arm-score"><span id="armScore">0</span><small>/10</small></div>
+            <p class="arm-label" id="armLabel"></p>
+            <p class="x-foot" id="armFoot"></p>
+          </article>
+
+          <article class="x x-family reveal" id="familyCard">
+            <h3><i class="ph ph-users-three"></i> <span data-i18n="family.title">Aile modu</span></h3>
+            <p class="x-sub" data-i18n="family.sub">Kim nereye otursun ki kavga çıkmasın?</p>
+            <div class="family-grid">
+              <ol class="family-list" id="familyList"></ol>
+              <div class="family-result" id="familyResult"></div>
+            </div>
+          </article>
+
+          <article class="x x-sweat reveal" id="sweatCard" hidden>
+            <h3><i class="ph ph-drop"></i> <span data-i18n="sweat.title">Terleme endeksi</span></h3>
+            <div class="sweat-score"><span id="sweatL">0</span><small>L</small></div>
+            <p id="sweatText"></p>
+          </article>
+
+          <article class="x x-fact reveal" id="factCard">
+            <h3><i class="ph ph-lightbulb"></i> <span data-i18n="fact.title">Biliyor muydun?</span></h3>
+            <p id="factText"></p>
+            <button type="button" class="link-btn" id="factNext"><span data-i18n="fact.next">Bir tane daha</span> <i class="ph ph-arrow-right"></i></button>
+          </article>
+        </div>
+
+        <div class="share-row reveal">
+          <button type="button" class="btn" id="shareBtn"><i class="ph ph-image-square"></i> <span data-i18n="share.card">Paylaşım kartı indir</span></button>
+          <button type="button" class="btn btn-ghost" id="copyLink"><i class="ph ph-link-simple"></i> <span data-i18n="share.link">Bağlantıyı kopyala</span></button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p data-i18n="footer.disclaimer">Tahmindir. Binaların, ağaçların, dağların ve tünellerin gölgesi hesaba katılmaz.</p>
+    <p class="credits">
+      <span data-i18n="footer.data">Veri:</span>
+      <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>,
+      <a href="https://project-osrm.org" target="_blank" rel="noopener">OSRM</a>,
+      <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a>,
+      <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>.
+      <a href="https://github.com/Cafu1107/sunseat" target="_blank" rel="noopener">GitHub</a>
+    </p>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
+  <script type="module" src="assets/js/app.js"></script>
+</body>
+</html>
